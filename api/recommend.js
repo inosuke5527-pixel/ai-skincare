@@ -169,33 +169,36 @@ export default async function handler(req, res) {
     if (intent.concerns.includes("redness")) parts.push("azelaic OR centella OR niacinamide");
     if ((skin?.sensitivities || []).includes("fragrance")) parts.push('"fragrance-free"');
 
-    const siteFilter = `site:nykaa.com OR site:sephora.com OR site:amazon.${region}`;
+        const siteFilter = `site:nykaa.com OR site:sephora.com OR site:amazon.${region}`;
 
-    const qStrict = `${parts.join(" ")} ${query}`.trim();
-    const qStrictWithSites = `${qStrict} ${siteFilter}`.trim();
-    const qBroadNoSites = `${parts.join(" ")} ${query}`.trim(); // same as qStrict but used as a “no site filter” pass
+    // Full strict query (with budget + site filter)
+    const qStrictWithSites = `${parts.join(" ")} ${query} ${siteFilter}`.trim();
+
+    // Relaxed: drop site filters
+    const qRelaxed = `${parts.join(" ")} ${query}`.trim();
+
+    // Very broad fallback: ignore budget, just focus on skin + category
+    const qVeryBroad = `${parts.join(" ")} best ${intent.categories[0] || "skincare"} for ${skin?.type || "skin"}`.trim();
+
 
     // ---------- Try multiple passes ----------
     let candidates = [];
 
-    // Pass 1: Google Shopping with strict query
+      // Pass 1: strict query
     try {
-      candidates = await googleShopping(qStrict, region);
-    } catch { /* ignore */ }
+      candidates = await googleShopping(qStrictWithSites, region);
+    } catch {}
 
-    // Pass 2: Google Web (shopping + organic) with site filters if still empty
+    // Pass 2: relaxed (no site filters)
     if (!candidates.length) {
-      try {
-        candidates = await googleWeb(qStrictWithSites, region);
-      } catch { /* ignore */ }
+      try { candidates = await googleWeb(qRelaxed, region); } catch {}
     }
 
-    // Pass 3: Google Web without site filters (broaden)
+    // Pass 3: very broad fallback
     if (!candidates.length) {
-      try {
-        candidates = await googleWeb(qBroadNoSites, region);
-      } catch { /* ignore */ }
+      try { candidates = await googleWeb(qVeryBroad, region); } catch {}
     }
+
 
     // If still empty — return early with debug info
     if (!candidates.length) {
