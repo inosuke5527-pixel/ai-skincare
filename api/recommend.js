@@ -1,4 +1,4 @@
-// api/recommend.js — India retailers + stronger extraction + diagnostics
+// api/recommend.js — India retailers + product URL filtering + price inference + robust fallbacks
 export default async function handler(req, res) {
   // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -27,7 +27,7 @@ export default async function handler(req, res) {
     // --- intent ---
     const parseIntent = (text = "") => {
       const q = text.toLowerCase();
-      const budget = /under\s*₹?\s*(\d{2,5})/.exec(q)?.[1] || /under\s*\$?\s*(\d{1,4})/.exec(q)?.[1];
+      const budget = /under\s*₹?\s*(\d{2,6})/.exec(q)?.[1] || /under\s*\$?\s*(\d{1,4})/.exec(q)?.[1];
       const budgetMax = budget ? Number(budget) : null;
       const hits = {
         acne: /(acne|pimple|whitehead|blackhead|breakout)/.test(q),
@@ -51,9 +51,8 @@ export default async function handler(req, res) {
     };
 
     const region = (prefs?.region || "IN").toUpperCase();
-    const gl = region.toLowerCase();               // "in"
+    const gl = region.toLowerCase();                      // "in"
     const googleDomain = gl === "in" ? "google.co.in" : `google.${gl}`;
-
     const intent = parseIntent(query);
 
     // --- helpers ---
@@ -69,20 +68,29 @@ export default async function handler(req, res) {
       const currency = /₹/.test(p) ? "INR" : (/\$|USD/.test(p) ? "USD" : null);
       return { value: v, currency };
     };
-
-    // --- Serp callers ---
-    const serpFetch = async (engine, q) => {
-      const base = `https://serpapi.com/search.json`;
-      const url = `${base}?engine=${engine}&q=${encodeURIComponent(q)}&hl=en&gl=${gl}&google_domain=${googleDomain}&location=${encodeURIComponent(region)}&num=20&api_key=${SERPAPI_KEY}`;
-      const data = await fetchJSON(url);
-      // handle soft errors from SerpAPI (quota, captcha)
-      if (data.error) return { data, items: [] };
-      return { data, items: extractAll(data) };
+    const inferPriceFromText = (t) => {
+      const m = String(t).match(/₹\s?(\d{2,6})/);
+      return m ? { value: Number(m[1]), currency: "INR" } : null;
     };
+    const storeFromUrl = (u) => {
+      try { return new URL(u).hostname.replace(/^www\./, ""); }
+      catch { return ""; }
+    };
+    const isProductUrl = (u) =>
+      /amazon\.[a-z.]+\/(dp|gp\/product)\//i.test(u) ||
+      /nykaa\.com\/.+\/p\//i.test(u) ||
+      /flipkart\.com\/.+\/p\/itm/i.test(u) ||
+      /purplle\.com\/product\//i.test(u) ||
+      /tirabeauty\.com\/product/i.test(u) ||
+      /1mg\.com\/otc/i.test(u) ||
+      /aqualogica\.in\/products\//i.test(u) ||
+      /reequil\.com\/products\//i.test(u) ||
+      /minimalist\.co\.in\/products\//i.test(u) ||
+      /fixderma\.com\/products\//i.test(u);
 
+    // --- extractors ---
     const extractAll = (data) => {
       const items = [];
-
       (data.shopping_results || []).forEach((r, i) => {
         items.push({
           id: r.product_id || `shop_${i}`,
@@ -96,7 +104,6 @@ export default async function handler(req, res) {
           source: "shopping_results",
         });
       });
-
       (data.inline_shopping_results || []).forEach((r, i) => {
         items.push({
           id: r.product_id || `inline_${i}`,
@@ -110,7 +117,6 @@ export default async function handler(req, res) {
           source: "inline_shopping_results",
         });
       });
-
       (data.organic_results || []).slice(0, 20).forEach((r, i) => {
         items.push({
           id: r.position ? `org_${r.position}` : `org_${i}`,
@@ -123,8 +129,16 @@ export default async function handler(req, res) {
           source: "organic_results",
         });
       });
-
       return items;
+    };
+
+    // --- Serp callers ---
+    const serpFetch = async (engine, q) => {
+      const base = `https://serpapi.com/search.json`;
+      const url = `${base}?engine=${engine}&q=${encodeURIComponent(q)}&hl=en&gl=${gl}&google_domain=${googleDomain}&location=${encodeURIComponent(region)}&num=20&api_key=${SERPAPI_KEY}`;
+      const data = await fetchJSON(url);
+      if (data.error) return { data, items: [] }; // rate-limit or other soft error
+      return { data, items: extractAll(data) };
     };
 
     // --- scoring ---
@@ -138,7 +152,6 @@ export default async function handler(req, res) {
         if (isSunscreen && c === "acne") bank = bank.filter(a => a !== "salicylic" && a !== "benzoyl peroxide");
         if (bank.some(a => text.includes(a))) s += 18;
       }
-
       if (isSunscreen && /(spf|pa\+|broad[- ]?spectrum|uva|uvb)/.test(text)) s += 25;
 
       const type = (profile?.skin?.type || "").toLowerCase();
@@ -161,7 +174,6 @@ export default async function handler(req, res) {
 
       return s;
     };
-
     const explain = (p, sc) => {
       const t = `${p.name} ${p.snippet}`;
       const bits = [];
@@ -177,18 +189,15 @@ export default async function handler(req, res) {
     // --- query tokens ---
     const tokens = [];
     if (intent.categories.includes("sunscreen")) {
-      tokens.push("sunscreen", "SPF", "PA++++");
-      if ((skin?.type || "").toLowerCase() === "oily")
-        tokens.push("gel OR matte OR oil-free OR lightweight");
-      if ((skin?.sensitivities || []).map(x=>x.toLowerCase()).includes("fragrance"))
-        tokens.push('"fragrance-free"');
+      tokens.push("sunscreen","SPF","PA++++");
+      if ((skin?.type || "").toLowerCase() === "oily") tokens.push("gel OR matte OR oil-free OR lightweight");
+      if ((skin?.sensitivities || []).map(x=>x.toLowerCase()).includes("fragrance")) tokens.push('"fragrance-free"');
     } else {
       if (intent.concerns.includes("pigmentation")) tokens.push('brightening "vitamin c" OR arbutin OR azelaic');
       if (intent.concerns.includes("acne")) tokens.push("salicylic OR benzoyl peroxide");
       if (intent.concerns.includes("redness")) tokens.push("azelaic OR centella OR niacinamide");
     }
 
-    // Indian retailers & brand sites
     const sites = [
       "nykaa.com",
       `amazon.${gl}`,
@@ -202,7 +211,6 @@ export default async function handler(req, res) {
       "fixderma.com"
     ];
 
-    // passes
     const strictSites = `site:${sites.join(" OR site:")}`;
     const qStrict = `${tokens.join(" ")} ${query} ${strictSites}`.trim();
     const qRelax  = `${tokens.join(" ")} ${query}`.trim();
@@ -251,64 +259,37 @@ export default async function handler(req, res) {
       }
     }
 
-    if (!allCandidates.length) {
-      return res.json({ queryUsed, intent, results: [], diag: debug ? diags : undefined });
-    }
+    // ----- DE-DUP, CLEAN, INFER PRICE, FILTER BY BUDGET -----
+    // de-dup by URL (before cleaning)
+    const seen = new Set();
+    const unique = allCandidates.filter(p => {
+      if (!p.url) return false;
+      const key = p.url.split("#")[0];
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
-    // Helpers
-const isProductUrl = (u) =>
-  /amazon\.[a-z.]+\/(dp|gp\/product)\//i.test(u) ||
-  /nykaa\.com\/.+\/p\//i.test(u) ||
-  /flipkart\.com\/.+\/p\/itm/i.test(u) ||
-  /purplle\.com\/product\//i.test(u) ||
-  /tirabeauty\.com\/product/i.test(u) ||
-  /1mg\.com\/otc/i.test(u) ||
-  /aqualogica\.in\/products\//i.test(u) ||
-  /reequil\.com\/products\//i.test(u) ||
-  /minimalist\.co\.in\/products\//i.test(u) ||
-  /fixderma\.com\/products\//i.test(u);
+    // keep product-like URLs; infer price/store; apply budget
+    const cleaned = unique
+      .filter(p => isProductUrl(p.url))
+      .map(p => ({
+        ...p,
+        price: p.price || inferPriceFromText(`${p.name} ${p.snippet}`),
+        store: storeFromUrl(p.url)
+      }))
+      .filter(p => !intent.budgetMax || !p.price || p.price.value <= intent.budgetMax);
 
-const inferPriceFromText = (t) => {
-  const m = String(t).match(/₹\s?(\d{2,6})/);
-  return m ? { value: Number(m[1]), currency: "INR" } : null;
-};
+    // fallback to unique if cleaning removed everything
+    const pool = cleaned.length ? cleaned : unique;
 
-const storeFromUrl = (u) => {
-  try { return new URL(u).hostname.replace(/^www\./, ""); }
-  catch { return ""; }
-};
-
-// De-dup by URL
-const seen = new Set();
-const unique = allCandidates.filter(p => {
-  if (!p.url) return false;
-  const key = p.url.split("#")[0];
-  if (seen.has(key)) return false;
-  seen.add(key);
-  return true;
-});
-
-// Keep product-like URLs, infer price & store, honor budget
-const cleaned = unique
-  .filter(p => isProductUrl(p.url))
-  .map(p => ({
-    ...p,
-    price: p.price || inferPriceFromText(`${p.name} ${p.snippet}`),
-    store: storeFromUrl(p.url)
-  }))
-  .filter(p => !intent.budgetMax || !p.price || p.price.value <= intent.budgetMax);
-
-// If nothing after cleaning, fall back to top unique items
-const pool = cleaned.length ? cleaned : unique;
-
-
+    // ----- RANK & RETURN -----
     const ranked = pool
-  .map(p => { const sc = scoreProduct(p, { skin, prefs }, intent); return { ...p, score: sc, why: explain(p, sc) }; })
-  .sort((a,b) => b.score - a.score)
-  .slice(0, 15);
+      .map(p => { const sc = scoreProduct(p, { skin, prefs }, intent); return { ...p, score: sc, why: explain(p, sc) }; })
+      .sort((a,b) => b.score - a.score)
+      .slice(0, 15);
 
-return res.json({ queryUsed, intent, results: ranked, diag: debug ? diags : undefined });
-
+    return res.json({ queryUsed, intent, results: ranked, diag: debug ? diags : undefined });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: String(e) });
