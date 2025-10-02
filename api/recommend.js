@@ -1,4 +1,4 @@
-// api/recommend.js — wide extraction + multiple fallbacks for India
+// api/recommend.js — India retailers + stronger extraction + diagnostics
 export default async function handler(req, res) {
   // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -8,31 +8,27 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Use POST" });
 
   try {
-    const { skin = {}, prefs = {}, query = "" } = req.body || {};
+    const { skin = {}, prefs = {}, query = "", debug = false } = req.body || {};
     const SERPAPI_KEY = process.env.SERPAPI_KEY;
     if (!SERPAPI_KEY) return res.status(500).json({ error: "Missing SERPAPI_KEY" });
 
-    // ---------- tiny KB ----------
+    // --- small KB ---
     const ACTIVE_MAP = {
-      acne: ["salicylic", "benzoyl peroxide", "azelaic", "retinol", "adapalene", "niacinamide", "zinc"],
-      pigmentation: ["vitamin c", "ascorbic", "arbutin", "kojic", "azelaic", "niacinamide", "tranexamic"],
-      redness: ["azelaic", "niacinamide", "allantoin", "centella", "madecassoside", "panthenol"],
-      dehydration: ["hyaluronic", "glycerin", "panthenol", "squalane", "ceramide"],
-      oil: ["niacinamide", "zinc", "salicylic"]
+      acne: ["salicylic","benzoyl peroxide","azelaic","retinol","adapalene","niacinamide","zinc"],
+      pigmentation: ["vitamin c","ascorbic","arbutin","kojic","azelaic","niacinamide","tranexamic"],
+      redness: ["azelaic","niacinamide","allantoin","centella","madecassoside","panthenol"],
+      dehydration: ["hyaluronic","glycerin","panthenol","squalane","ceramide"],
+      oil: ["niacinamide","zinc","salicylic"]
     };
-    const IRRITANTS = ["fragrance", "parfum", "linalool", "limonene", "eugenol", "citrus"];
-    const HIGH_COMEDO = ["isopropyl myristate", "isopropyl palmitate", "coconut oil"];
-    const BRAND_BOOST_IN = ["minimalist", "re'equil", "reequil", "aqualogica", "fixderma", "the derma co", "dr sheth", "dr. sheth"];
+    const IRRITANTS = ["fragrance","parfum","linalool","limonene","eugenol","citrus"];
+    const HIGH_COMEDO = ["isopropyl myristate","isopropyl palmitate","coconut oil"];
+    const BRAND_BOOST_IN = ["minimalist","re'equil","reequil","aqualogica","fixderma","the derma co","dr sheth","dr. sheth"];
 
-    const region = (prefs?.region || "IN").toLowerCase();
-    const gl = region; // e.g., "in"
-
-    // ---------- intent ----------
+    // --- intent ---
     const parseIntent = (text = "") => {
       const q = text.toLowerCase();
       const budget = /under\s*₹?\s*(\d{2,5})/.exec(q)?.[1] || /under\s*\$?\s*(\d{1,4})/.exec(q)?.[1];
       const budgetMax = budget ? Number(budget) : null;
-
       const hits = {
         acne: /(acne|pimple|whitehead|blackhead|breakout)/.test(q),
         pigmentation: /(tan|suntan|dark spot|hyperpig|melasma|dull)/.test(q),
@@ -40,7 +36,7 @@ export default async function handler(req, res) {
         dehydration: /(dry|dehydrated|tight|flaky)/.test(q),
         oil: /(oily|oil|sebum|shine)/.test(q),
       };
-      const concerns = Object.entries(hits).filter(([, v]) => v).map(([k]) => k);
+      const concerns = Object.entries(hits).filter(([,v])=>v).map(([k])=>k);
       if (!concerns.length && /(tan|suntan)/.test(q)) concerns.push("pigmentation");
 
       const cats = new Set();
@@ -53,26 +49,40 @@ export default async function handler(req, res) {
 
       return { budgetMax, concerns: concerns.length ? concerns : ["acne"], categories: [...cats] };
     };
+
+    const region = (prefs?.region || "IN").toUpperCase();
+    const gl = region.toLowerCase();               // "in"
+    const googleDomain = gl === "in" ? "google.co.in" : `google.${gl}`;
+
     const intent = parseIntent(query);
 
-    // ---------- utils ----------
+    // --- helpers ---
     const fetchJSON = async (url) => {
       const r = await fetch(url);
-      if (!r.ok) throw new Error(`fetch ${url} -> ${r.status}`);
-      return r.json();
+      const data = await r.json().catch(()=> ({}));
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return data;
     };
     const normPrice = (p) => {
       if (!p) return null;
       const v = Number(String(p).replace(/[^\d.]/g, "")) || null;
-      const currency = /₹/.test(p) ? "INR" : /\$|USD/.test(p) ? "USD" : null;
+      const currency = /₹/.test(p) ? "INR" : (/\$|USD/.test(p) ? "USD" : null);
       return { value: v, currency };
     };
 
-    // ---------- extractors ----------
+    // --- Serp callers ---
+    const serpFetch = async (engine, q) => {
+      const base = `https://serpapi.com/search.json`;
+      const url = `${base}?engine=${engine}&q=${encodeURIComponent(q)}&hl=en&gl=${gl}&google_domain=${googleDomain}&location=${encodeURIComponent(region)}&num=20&api_key=${SERPAPI_KEY}`;
+      const data = await fetchJSON(url);
+      // handle soft errors from SerpAPI (quota, captcha)
+      if (data.error) return { data, items: [] };
+      return { data, items: extractAll(data) };
+    };
+
     const extractAll = (data) => {
       const items = [];
 
-      // 1) Shopping blocks
       (data.shopping_results || []).forEach((r, i) => {
         items.push({
           id: r.product_id || `shop_${i}`,
@@ -87,7 +97,6 @@ export default async function handler(req, res) {
         });
       });
 
-      // 2) Inline shopping (often appears instead)
       (data.inline_shopping_results || []).forEach((r, i) => {
         items.push({
           id: r.product_id || `inline_${i}`,
@@ -102,8 +111,7 @@ export default async function handler(req, res) {
         });
       });
 
-      // 3) Organic links
-      (data.organic_results || []).slice(0, 15).forEach((r, i) => {
+      (data.organic_results || []).slice(0, 20).forEach((r, i) => {
         items.push({
           id: r.position ? `org_${r.position}` : `org_${i}`,
           name: r.title,
@@ -119,58 +127,37 @@ export default async function handler(req, res) {
       return items;
     };
 
-    // ---------- SERP callers ----------
-    const googleShopping = async (q) => {
-      const url = `https://serpapi.com/search.json?engine=google_shopping&q=${encodeURIComponent(q)}&hl=en&gl=${gl}&google_domain=google.${gl}&num=20&api_key=${SERPAPI_KEY}`;
-      const data = await fetchJSON(url);
-      return extractAll(data);
-    };
-    const googleWeb = async (q) => {
-      const url = `https://serpapi.com/search.json?engine=google&q=${encodeURIComponent(q)}&hl=en&gl=${gl}&google_domain=google.${gl}&num=20&api_key=${SERPAPI_KEY}`;
-      const data = await fetchJSON(url);
-      return extractAll(data);
-    };
-
-    // ---------- scoring ----------
+    // --- scoring ---
     const scoreProduct = (p, profile, intent) => {
       const text = `${p.name} ${p.snippet}`.toLowerCase();
       let s = 0;
       const isSunscreen = intent.categories.includes("sunscreen");
 
-      // concerns by actives (but avoid acne actives on sunscreen pages)
       for (const c of intent.concerns) {
         let bank = ACTIVE_MAP[c] || [];
         if (isSunscreen && c === "acne") bank = bank.filter(a => a !== "salicylic" && a !== "benzoyl peroxide");
         if (bank.some(a => text.includes(a))) s += 18;
       }
 
-      // sunscreen cues
       if (isSunscreen && /(spf|pa\+|broad[- ]?spectrum|uva|uvb)/.test(text)) s += 25;
 
-      // skin type fits
       const type = (profile?.skin?.type || "").toLowerCase();
       if (type === "oily" && /(gel|fluid|oil[- ]?free|matte|lightweight)/.test(text)) s += 10;
       if (type === "dry"  && /(cream|balm|rich|ceramide|shea)/.test(text)) s += 10;
       if (type === "sensitive" && /(fragrance[- ]?free|mineral|zinc oxide|titanium dioxide|soothing|centella)/.test(text)) s += 10;
 
-      // sensitivities
       const sensitivities = (profile?.skin?.sensitivities || []).map(x => x.toLowerCase());
       if (sensitivities.includes("fragrance") && IRRITANTS.some(w => text.includes(w))) s -= 30;
-
-      // acne & comedogenic
       if ((profile?.skin?.concerns || []).includes("acne") && HIGH_COMEDO.some(w => text.includes(w))) s -= 12;
 
-      // budget
       const price = p?.price?.value;
       if (intent.budgetMax && price && price <= intent.budgetMax) s += 6;
       if (intent.budgetMax && price && price > intent.budgetMax) s -= 10;
 
-      // ratings
       if (p.rating) s += Math.min(10, p.rating * 2);
 
-      // India brand boost
-      const lowerName = `${p.name} ${p.brand}`.toLowerCase();
-      if (BRAND_BOOST_IN.some(b => lowerName.includes(b))) s += 6;
+      const lower = `${p.name} ${p.brand}`.toLowerCase();
+      if (BRAND_BOOST_IN.some(b => lower.includes(b))) s += 6;
 
       return s;
     };
@@ -187,7 +174,7 @@ export default async function handler(req, res) {
       return bits.length ? `Picked for ${bits.join("; ")}.` : "Good overall fit.";
     };
 
-    // ---------- queries ----------
+    // --- query tokens ---
     const tokens = [];
     if (intent.categories.includes("sunscreen")) {
       tokens.push("sunscreen", "SPF", "PA++++");
@@ -201,50 +188,90 @@ export default async function handler(req, res) {
       if (intent.concerns.includes("redness")) tokens.push("azelaic OR centella OR niacinamide");
     }
 
-    const siteFilter = `site:nykaa.com OR site:amazon.${gl} OR site:sephora.com`;
-
-    // passes (strict → relaxed → broad + site sweeps)
-    const q1 = `${tokens.join(" ")} ${query} ${siteFilter}`.trim();
-    const q2 = `${tokens.join(" ")} ${query}`.trim();
-    const q3 = `${tokens.join(" ")} best ${intent.categories[0] || "skincare"} for ${skin?.type || "skin"}`.trim();
-    const siteSweeps = [
-      `${tokens.join(" ")} ${query} site:nykaa.com`,
-      `${tokens.join(" ")} ${query} site:amazon.${gl}`,
-      `${tokens.join(" ")} ${query} site:sephora.com`,
+    // Indian retailers & brand sites
+    const sites = [
+      "nykaa.com",
+      `amazon.${gl}`,
+      "flipkart.com",
+      "tirabeauty.com",
+      "purplle.com",
+      "1mg.com",
+      "minimalist.co.in",
+      "reequil.com",
+      "aqualogica.in",
+      "fixderma.com"
     ];
 
-    // ---------- run passes ----------
-    let candidates = [];
-    let queryUsed = q1;
+    // passes
+    const strictSites = `site:${sites.join(" OR site:")}`;
+    const qStrict = `${tokens.join(" ")} ${query} ${strictSites}`.trim();
+    const qRelax  = `${tokens.join(" ")} ${query}`.trim();
+    const qBroad  = `${tokens.join(" ")} best ${intent.categories[0] || "skincare"} for ${skin?.type || "skin"}`.trim();
 
-    try { candidates = await googleShopping(q1); } catch {}
+    let allCandidates = [];
+    let queryUsed = qStrict;
+    const diags = [];
 
-    if (!candidates.length) { try { candidates = await googleWeb(q1); } catch {} }
-    if (!candidates.length) { queryUsed = q2; try { candidates = await googleWeb(q2); } catch {} }
-    if (!candidates.length) { queryUsed = q3; try { candidates = await googleWeb(q3); } catch {} }
+    // Pass 1: Shopping strict
+    let r = await serpFetch("google_shopping", qStrict);
+    diags.push({ pass: "shopping_strict", count: r.items.length, err: r.data?.error });
+    allCandidates = allCandidates.concat(r.items);
 
-    if (!candidates.length) {
-      // sweep sites individually (often helps)
-      for (const q of siteSweeps) {
-        try {
-          const add = await googleWeb(q);
-          candidates = candidates.concat(add);
-          if (candidates.length) { queryUsed = q; break; }
-        } catch {}
+    // Pass 2: Web strict
+    if (allCandidates.length < 8) {
+      r = await serpFetch("google", qStrict);
+      diags.push({ pass: "web_strict", count: r.items.length, err: r.data?.error });
+      allCandidates = allCandidates.concat(r.items);
+    }
+
+    // Pass 3: Web relax
+    if (allCandidates.length < 8) {
+      queryUsed = qRelax;
+      r = await serpFetch("google", qRelax);
+      diags.push({ pass: "web_relax", count: r.items.length, err: r.data?.error });
+      allCandidates = allCandidates.concat(r.items);
+    }
+
+    // Pass 4: Web broad
+    if (allCandidates.length < 8) {
+      queryUsed = qBroad;
+      r = await serpFetch("google", qBroad);
+      diags.push({ pass: "web_broad", count: r.items.length, err: r.data?.error });
+      allCandidates = allCandidates.concat(r.items);
+    }
+
+    // Pass 5: per-site sweeps
+    if (allCandidates.length < 8) {
+      for (const s of sites) {
+        const q = `${tokens.join(" ")} ${query} site:${s}`.trim();
+        r = await serpFetch("google", q);
+        diags.push({ pass: `site_${s}`, count: r.items.length, err: r.data?.error });
+        allCandidates = allCandidates.concat(r.items);
+        if (allCandidates.length >= 8) { queryUsed = q; break; }
       }
     }
 
-    if (!candidates.length) {
-      return res.json({ queryUsed, intent, results: [] });
+    if (!allCandidates.length) {
+      return res.json({ queryUsed, intent, results: [], diag: debug ? diags : undefined });
     }
 
-    // rank & trim
-    const ranked = candidates
+    // de-dup by URL
+    const seen = new Set();
+    const unique = allCandidates.filter(p => {
+      if (!p.url) return false;
+      const key = p.url.split("#")[0];
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const ranked = unique
       .map(p => { const sc = scoreProduct(p, { skin, prefs }, intent); return { ...p, score: sc, why: explain(p, sc) }; })
       .sort((a,b) => b.score - a.score)
       .slice(0, 15);
 
-    return res.json({ queryUsed, intent, results: ranked });
+    return res.json({ queryUsed, intent, results: ranked, diag: debug ? diags : undefined });
+
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: String(e) });
