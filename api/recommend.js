@@ -255,22 +255,59 @@ export default async function handler(req, res) {
       return res.json({ queryUsed, intent, results: [], diag: debug ? diags : undefined });
     }
 
-    // de-dup by URL
-    const seen = new Set();
-    const unique = allCandidates.filter(p => {
-      if (!p.url) return false;
-      const key = p.url.split("#")[0];
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    // Helpers
+const isProductUrl = (u) =>
+  /amazon\.[a-z.]+\/(dp|gp\/product)\//i.test(u) ||
+  /nykaa\.com\/.+\/p\//i.test(u) ||
+  /flipkart\.com\/.+\/p\/itm/i.test(u) ||
+  /purplle\.com\/product\//i.test(u) ||
+  /tirabeauty\.com\/product/i.test(u) ||
+  /1mg\.com\/otc/i.test(u) ||
+  /aqualogica\.in\/products\//i.test(u) ||
+  /reequil\.com\/products\//i.test(u) ||
+  /minimalist\.co\.in\/products\//i.test(u) ||
+  /fixderma\.com\/products\//i.test(u);
 
-    const ranked = unique
-      .map(p => { const sc = scoreProduct(p, { skin, prefs }, intent); return { ...p, score: sc, why: explain(p, sc) }; })
-      .sort((a,b) => b.score - a.score)
-      .slice(0, 15);
+const inferPriceFromText = (t) => {
+  const m = String(t).match(/₹\s?(\d{2,6})/);
+  return m ? { value: Number(m[1]), currency: "INR" } : null;
+};
 
-    return res.json({ queryUsed, intent, results: ranked, diag: debug ? diags : undefined });
+const storeFromUrl = (u) => {
+  try { return new URL(u).hostname.replace(/^www\./, ""); }
+  catch { return ""; }
+};
+
+// De-dup by URL
+const seen = new Set();
+const unique = allCandidates.filter(p => {
+  if (!p.url) return false;
+  const key = p.url.split("#")[0];
+  if (seen.has(key)) return false;
+  seen.add(key);
+  return true;
+});
+
+// Keep product-like URLs, infer price & store, honor budget
+const cleaned = unique
+  .filter(p => isProductUrl(p.url))
+  .map(p => ({
+    ...p,
+    price: p.price || inferPriceFromText(`${p.name} ${p.snippet}`),
+    store: storeFromUrl(p.url)
+  }))
+  .filter(p => !intent.budgetMax || !p.price || p.price.value <= intent.budgetMax);
+
+// If nothing after cleaning, fall back to top unique items
+const pool = cleaned.length ? cleaned : unique;
+
+
+    const ranked = pool
+  .map(p => { const sc = scoreProduct(p, { skin, prefs }, intent); return { ...p, score: sc, why: explain(p, sc) }; })
+  .sort((a,b) => b.score - a.score)
+  .slice(0, 15);
+
+return res.json({ queryUsed, intent, results: ranked, diag: debug ? diags : undefined });
 
   } catch (e) {
     console.error(e);
