@@ -5,15 +5,26 @@ export default async function handler(req, res) {
     "Access-Control-Allow-Methods": "POST,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
   };
-  if (req.method === "OPTIONS") return res.status(200).set(CORS).end();
-  if (req.method !== "POST") return res.status(405).set(CORS).json({ error: "Use POST" });
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(200, CORS);
+    return res.end();
+  }
+
+  if (req.method !== "POST") {
+    res.writeHead(405, CORS);
+    return res.end(JSON.stringify({ error: "Use POST" }));
+  }
 
   const { messages } = req.body || {};
   if (!Array.isArray(messages) || messages.length === 0) {
-    return res.status(400).set(CORS).json({ error: "messages array required" });
+    res.writeHead(400, CORS);
+    return res.end(JSON.stringify({ error: "messages array required" }));
   }
+
   if (!process.env.OPENAI_API_KEY) {
-    return res.status(500).set(CORS).json({ error: "OPENAI_API_KEY missing on server" });
+    res.writeHead(500, CORS);
+    return res.end(JSON.stringify({ error: "OPENAI_API_KEY missing on server" }));
   }
 
   try {
@@ -29,12 +40,18 @@ export default async function handler(req, res) {
         messages,
       }),
     });
+
     const data = await r.json();
-    if (!r.ok) return res.status(r.status).set(CORS).json(data);
+    if (!r.ok) {
+      res.writeHead(r.status, CORS);
+      return res.end(JSON.stringify(data));
+    }
 
     const reply = data.choices?.[0]?.message?.content ?? "";
-    return res.status(200).set(CORS).json({ reply });
+    res.writeHead(200, CORS);
+    return res.end(JSON.stringify({ reply }));
   } catch (e) {
-    return res.status(500).set(CORS).json({ error: String(e) });
+    res.writeHead(500, CORS);
+    return res.end(JSON.stringify({ error: String(e) }));
   }
 }
