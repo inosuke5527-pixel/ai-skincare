@@ -31,8 +31,12 @@ function isConfused(t = "") {
 function askedForRoutine(t = "") {
   return /\b(routine|regimen|before bed|night|pm|am|morning|evening)\b/i.test(t);
 }
-function askedForProducts(t = "") {
-  return /\b(show|links?|prices?|price|buy|where to buy|options)\b/i.test(t);
+function asksWhichProduct(t = "") {
+  const x = L(t);
+  // catch more ways users ask
+  const productWords = /\b(cleanser|face ?wash|serum|moisturizer|cream|gel|toner|sunscreen|spf|mask|exfoliator|shampoo|conditioner|product|routine)\b/;
+  const askWords = /\b(which|what|recommend|suggest|use|good|best|tell me|show|should i)\b/;
+  return askWords.test(x) || (productWords.test(x) && /\b(use|buy|choose|pick|go for|tell)\b/.test(x));
 }
 function asksWhichProduct(t = "") {
   return /\b(which|what|recommend|suggest|use|good|best)\b/i.test(L(t)) &&
