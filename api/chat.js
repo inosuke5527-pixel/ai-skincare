@@ -1,14 +1,13 @@
-// /api/chat.js
-// Next.js "pages" API route (Node runtime). Works on Vercel.
-// Make sure you installed:  npm i openai
+// api/chat.js
+// Vercel Serverless Function (Node runtime), CommonJS version.
+// No ESM needed. Make sure the backend repo has:  npm i openai
 
-import OpenAI from "openai";
+const OpenAI = require("openai");
 
-// ---------- ENV GUARDS ----------
+// ---------- ENV ----------
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SERPAPI_KEY = process.env.SERPAPI_KEY; // optional (only used when allowProducts + user asks)
-
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
 // ---------- SYSTEM PROMPT ----------
 const SYSTEM_PROMPT =
@@ -41,7 +40,6 @@ TONE: Empathetic, clear, brief.
 function isGreeting(t = "") {
   return /\b(hi|hello|hey|hola|namaste|yo)\b/i.test(t);
 }
-
 function isDermTopic(t = "") {
   const allow = [
     "skin","skincare","dermatology","acne","pimple","blackhead","whitehead",
@@ -55,13 +53,11 @@ function isDermTopic(t = "") {
   const x = t.toLowerCase();
   return allow.some((w) => x.includes(w));
 }
-
 function intakeComplete(intake) {
   if (!intake) return false;
   const req = ["skinType", "concerns", "sensitivities", "routineBasics"];
   return req.every((k) => intake[k] && String(intake[k]).trim().length > 0);
 }
-
 function sanitize(text = "", hide) {
   if (!hide) return text;
   return text
@@ -72,8 +68,7 @@ function sanitize(text = "", hide) {
 // ---------- OPTIONAL PRODUCT FETCHER ----------
 async function fetchProducts(query) {
   try {
-    if (!SERPAPI_KEY) return []; // no key → silently skip products
-
+    if (!SERPAPI_KEY) return [];
     const url = new URL("https://serpapi.com/search.json");
     url.searchParams.set("engine", "google_shopping");
     url.searchParams.set("q", query);
@@ -113,8 +108,8 @@ async function fetchProducts(query) {
   }
 }
 
-// ---------- API ROUTE ----------
-export default async function handler(req, res) {
+// ---------- HANDLER ----------
+module.exports = async function handler(req, res) {
   // CORS for Expo
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -122,9 +117,8 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  // Ensure JSON responses even on config mistakes
   try {
-    // Fast env check (prevents HTML 500s → “Network error” in app)
+    // Early env guard so we always return JSON (prevents HTML 500 → “Network error”)
     if (!OPENAI_API_KEY) {
       return res
         .status(200)
@@ -191,8 +185,8 @@ export default async function handler(req, res) {
     return res.status(200).json({ reply, products });
   } catch (err) {
     console.error("Chat API error:", err);
-    // Always return JSON so the client doesn't throw “Network error”
     const msg = err?.message || String(err);
+    // Always return JSON so the app doesn't throw “Network error”
     return res.status(200).json({ reply: "Server error: " + msg, products: [] });
   }
-}
+};
