@@ -13,10 +13,10 @@ Style: short, warm, practical (2–6 lines). Light bullets when helpful. Emojis 
 Give safe, general advice; no medical diagnoses. Suggest seeing a dermatologist for severe/persistent issues.
 
 Key behaviors:
-• If the user asks for a routine (night/morning/AM/PM), give a safe starter routine immediately and then ask ONE quick follow-up to tailor.
-• If the user asks “which product should I use?”, suggest product TYPES + ingredients and 2–3 common brand examples (balanced, not promotional).
+• If user asks for a routine (night/morning/AM/PM), give a safe starter routine immediately and then ONE quick follow-up to tailor.
+• If user asks “which product should I use?” or says “I don’t know the product name”, provide 2–3 **brand/name examples** per step (Cleanser/Serum/Moisturizer) without links.
 • Only include links/prices when the user explicitly asks (“links”, “show products”, “price”, “where to buy”, “buy”).
-• If the user is confused (“I don’t understand / IDK”), re-explain simply and invite them to pick a goal.
+• If user is confused (“I don’t understand / IDK”), re-explain simply and invite them to pick a goal.
 `;
 
 /* ------------------------------- Helpers -------------------------------- */
@@ -34,12 +34,12 @@ function askedForRoutine(t = "") {
 function askedForProducts(t = "") {
   return /\b(show|links?|prices?|price|buy|where to buy|options)\b/i.test(t);
 }
-// 🔥 improved detector for “what should I use?”-type asks
+// 🔥 treat many phrasings as “which product” + “i don’t know the product name”
 function asksWhichProduct(t = "") {
   const x = L(t);
-  const productWords = /\b(cleanser|face ?wash|serum|moisturizer|cream|gel|toner|sunscreen|spf|mask|exfoliator|peel|shampoo|conditioner|product|routine)\b/;
-  const askWords = /\b(which|what|recommend|suggest|use|good|best|tell me|should i|pick|choose|go for)\b/;
-  return askWords.test(x) || (productWords.test(x) && /\b(use|buy|choose|pick|go for|tell|need)\b/.test(x));
+  const productWords = /\b(cleanser|face ?wash|serum|moisturizer|cream|gel|toner|sunscreen|spf|mask|exfoliator|peel|shampoo|conditioner|product|products|name)\b/;
+  const askWords = /\b(which|what|recommend|suggest|use|good|best|tell me|should i|pick|choose|go for|i don.?t know|don.?t know the product name|product name)\b/;
+  return askWords.test(x) || (productWords.test(x) && /\b(use|buy|choose|pick|go for|tell|need|name)\b/.test(x));
 }
 function mentionsBudget(t = "") {
   return /\b(budget|under|below|affordable|cheap|expensive|price range)\b/i.test(L(t));
@@ -50,7 +50,7 @@ function isDermTopic(t = "") {
     "acne","pimple","blackhead","whitehead","pigment","hyperpigmentation","melasma",
     "redness","sensitive","texture","pores","wrinkle","fine lines","glow",
     "oil","oily","dry","combination","normal","dehydrated",
-    "hair","scalp","dandruff","seborrheic","hair fall","hair loss","frizz","oily scalp","dry scalp",
+    "hair","scalp","dandruff","seborrheic","hair fall","hair loss","frizz",
     "cleanser","face wash","serum","toner","moisturizer","cream","gel",
     "sunscreen","spf","mask","exfoliator","peel","retinol","retinoid",
     "aha","bha","pha","salicylic","glycolic","lactic","mandelic","azelaic",
@@ -88,10 +88,82 @@ function updateIntakeFromUtterance(intake = {}, userText = "") {
 
   return intake;
 }
-function intakeComplete(intake) {
-  if (!intake) return false;
-  const must = ["skinType", "concerns"];
-  return must.every((k) => intake[k] && String(intake[k]).trim());
+
+/* ------------------ Curated examples (brand + product names) ------------- */
+/* These are generic, commonly available lines (no links, not promotional). */
+function exampleNames({ skinType = "normal", concerns = "" } = {}) {
+  const oily = /oily/i.test(skinType);
+  const dry = /dry/i.test(skinType);
+  const acne = /acne|pimple/i.test(concerns);
+  const pigment = /pigment|dark spot|melasma/i.test(concerns);
+
+  const Cleanser = oily
+    ? [
+        "CeraVe Foaming Facial Cleanser",
+        "La Roche-Posay Effaclar Purifying Gel",
+        "Minimalist Salicylic Acid Face Wash",
+      ]
+    : dry
+    ? [
+        "CeraVe Hydrating Cleanser",
+        "Cetaphil Gentle Skin Cleanser",
+        "Simple Kind to Skin Refreshing Wash",
+      ]
+    : [
+        "CeraVe Foaming Cleanser",
+        "Simple Micellar Gel Wash",
+        "Neutrogena Ultra Gentle Cleanser",
+      ];
+
+  const Serum = acne
+    ? [
+        "The Ordinary Niacinamide 10% + Zinc 1%",
+        "Minimalist Salicylic Acid 2%",
+        "Paula’s Choice 2% BHA Liquid",
+      ]
+    : pigment
+    ? [
+        "The Ordinary Alpha Arbutin 2% + HA",
+        "Minimalist Alpha Arbutin 2%",
+        "La Roche-Posay Pure Vitamin C10",
+      ]
+    : oily
+    ? [
+        "Minimalist Niacinamide 10%",
+        "The Ordinary Niacinamide 10% + Zinc 1%",
+        "Dot & Key Niacinamide Serum",
+      ]
+    : dry
+    ? [
+        "The Ordinary Hyaluronic Acid 2% + B5",
+        "Plum 2% Hyaluronic Acid Serum",
+        "Minimalist Sepicalm 3% (calming)",
+      ]
+    : [
+        "The Ordinary Hyaluronic Acid 2% + B5",
+        "Minimalist Niacinamide 10%",
+        "Plum 2% Hyaluronic Acid Serum",
+      ];
+
+  const Moisturizer = oily
+    ? [
+        "Neutrogena Hydro Boost Water Gel",
+        "Re’equil Oil-Free Moisturizer",
+        "Clinique Dramatically Different Hydrating Jelly",
+      ]
+    : dry
+    ? [
+        "CeraVe Moisturizing Cream",
+        "Cetaphil Moisturising Cream",
+        "La Roche-Posay Toleriane Sensitive",
+      ]
+    : [
+        "CeraVe Daily Moisturizing Lotion",
+        "Cetaphil Moisturising Lotion",
+        "Re’equil Ceramide & Hyaluronic Acid Moisturizer",
+      ];
+
+  return { Cleanser, Serum, Moisturizer };
 }
 
 /* -------------------------- Google Shopping cards ------------------------ */
@@ -203,27 +275,30 @@ export default async function handler(req, res) {
       return res.status(200).json({ reply: starter, products: [], intake });
     }
 
-    // 3) “Which product should I use?” → ingredient + 2–3 brand examples
+    // 3) “Which product should I use?” or “I don’t know the product name” → NAMES now
     if (asksWhichProduct(userText)) {
-      const skin = intake.skinType || "skin";
-      const concern = intake.concerns || "general care";
-      const tip = [
-        `for ${skin} + ${concern}:`,
-        "• Cleanser → gentle gel; acne-prone can try **salicylic acid**",
-        "• Serum → **niacinamide** (oil & pores) or **hyaluronic acid** (hydration)",
-        "• Moisturizer → **oil-free gel** if oily; light cream if dry/sensitive",
+      const { Cleanser, Serum, Moisturizer } = exampleNames({
+        skinType: intake.skinType || "normal",
+        concerns: intake.concerns || "",
+      });
+
+      const namesReply = [
+        "here are some **product name examples** you can look for (no links):",
+        `• **Cleanser** → ${Cleanser.slice(0, 3).join(" / ")}`,
+        `• **Serum** → ${Serum.slice(0, 3).join(" / ")}`,
+        `• **Moisturizer** → ${Moisturizer.slice(0, 3).join(" / ")}`,
         "",
-        "common examples you can look up: CeraVe / Minimalist / The Ordinary / Neutrogena / Re’equil.",
-        "say “links” or “show products” if you want prices & images 🛍️",
+        "want **links & prices** too? just say “show products for cleanser/serum/moisturizer”.",
       ].join("\n");
-      return res.status(200).json({ reply: tip, products: [], intake });
+
+      return res.status(200).json({ reply: namesReply, products: [], intake });
     }
 
     // 4) Budget mention → acknowledge & invite product search
     if (mentionsBudget(userText)) {
       return res.status(200).json({
         reply:
-          "got it — i’ll keep it budget-friendly. want me to **show products with prices** for your routine? just say “show products for cleanser/serum/moisturizer”.",
+          "got it — i’ll keep it budget-friendly. want me to **show products with prices** for any step? say “show products for cleanser/serum/moisturizer”.",
         products: [],
         intake,
       });
