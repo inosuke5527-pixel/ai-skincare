@@ -1,17 +1,27 @@
 // /api/chat.js
+// Next.js "pages" API route (Node runtime). Works on Vercel.
+// Make sure you installed:  npm i openai
+
 import OpenAI from "openai";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// ---------- ENV GUARDS ----------
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const SERPAPI_KEY = process.env.SERPAPI_KEY; // optional (only used when allowProducts + user asks)
 
-// --- System Prompt (you can move this into env: SKIN_COACH_SYSTEM_PROMPT) ---
-const SYSTEM_PROMPT = process.env.SKIN_COACH_SYSTEM_PROMPT ?? `
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+// ---------- SYSTEM PROMPT ----------
+const SYSTEM_PROMPT =
+  process.env.SKIN_COACH_SYSTEM_PROMPT ??
+  `
 You are “Skin Coach”, a friendly dermatologist-informed assistant for a skincare app.
-SCOPE: Only discuss dermatology/skin care (skin types, concerns, routines, ingredients, suitability, patch testing, lifestyle impacts).
-If out of scope → say: “I can only help with dermatology and skin-care topics.” Then offer examples of what you can help with.
+
+SCOPE: Dermatology/skin care only (skin types, concerns, routines, ingredients, suitability, patch testing, lifestyle impacts).
+If out of scope → say: “I can only help with dermatology and skin-care topics.” Then offer examples of what you CAN help with.
 
 INTAKE FIRST: Before recommending products or showing links/images/prices, collect essentials:
 1) Skin type (oily/dry/combination/sensitive/normal/unknown)
-2) Main concerns (acne, pigmentation, wrinkles, redness, texture, pores)
+2) Main concerns (acne, pigmentation, redness, wrinkles, texture, pores)
 3) Sensitivities/allergies + active meds (e.g., isotretinoin, pregnancy/breastfeeding)
 4) Current routine basics (AM/PM) + budget range
 Ask max 2–3 concise questions at a time. Be warm and concise.
@@ -27,7 +37,7 @@ FOLLOW-UPS:
 TONE: Empathetic, clear, brief.
 `;
 
-// --- helpers ---
+// ---------- HELPERS ----------
 function isGreeting(t = "") {
   return /\b(hi|hello|hey|hola|namaste|yo)\b/i.test(t);
 }
@@ -59,46 +69,51 @@ function sanitize(text = "", hide) {
     .replace(/[₹$]\s?\d[\d,.,]*/g, "[price hidden until we finish your skin profile]");
 }
 
-// --- optional product fetcher (only used when allowProducts === true) ---
+// ---------- OPTIONAL PRODUCT FETCHER ----------
 async function fetchProducts(query) {
-  const url = new URL("https://serpapi.com/search.json");
-  url.searchParams.set("engine", "google_shopping");
-  url.searchParams.set("q", query);
-  url.searchParams.set("gl", "in");
-  url.searchParams.set("hl", "en");
-  url.searchParams.set("api_key", process.env.SERPAPI_KEY);
+  try {
+    if (!SERPAPI_KEY) return []; // no key → silently skip products
 
-  const r = await fetch(url.toString(), { cache: "no-store" });
-  if (!r.ok) return [];
-  const j = await r.json();
+    const url = new URL("https://serpapi.com/search.json");
+    url.searchParams.set("engine", "google_shopping");
+    url.searchParams.set("q", query);
+    url.searchParams.set("gl", "in");
+    url.searchParams.set("hl", "en");
+    url.searchParams.set("api_key", SERPAPI_KEY);
 
-  return (j.shopping_results || [])
-    .slice(0, 6)
-    .map((p) => {
-      const image =
-        p.thumbnail ||
-        p.product_photos?.[0]?.link ||
-        p.image ||
-        p.rich_product?.images?.[0] ||
-        null;
+    const r = await fetch(url.toString(), { cache: "no-store" });
+    if (!r.ok) return [];
+    const j = await r.json();
 
-      const priceINR =
-        typeof p.extracted_price === "number" ? Math.round(p.extracted_price) : null;
+    return (j.shopping_results || [])
+      .slice(0, 6)
+      .map((p) => {
+        const image =
+          p.thumbnail ||
+          p.product_photos?.[0]?.link ||
+          p.image ||
+          p.rich_product?.images?.[0] ||
+          null;
 
-      return {
-        title: p.title || "",
-        priceINR,
-        price: priceINR
-          ? `₹${priceINR.toLocaleString("en-IN")}`
-          : p.price || "",
-        url: p.link || p.product_link || null,
-        image,
-        details: [p.source, p.condition, p.delivery].filter(Boolean).join(" • "),
-      };
-    })
-    .filter((p) => p.title && p.image);
+        const priceINR =
+          typeof p.extracted_price === "number" ? Math.round(p.extracted_price) : null;
+
+        return {
+          title: p.title || "",
+          priceINR,
+          price: priceINR ? `₹${priceINR.toLocaleString("en-IN")}` : p.price || "",
+          url: p.link || p.product_link || null,
+          image,
+          details: [p.source, p.condition, p.delivery].filter(Boolean).join(" • "),
+        };
+      })
+      .filter((p) => p.title && p.image);
+  } catch {
+    return [];
+  }
 }
 
+// ---------- API ROUTE ----------
 export default async function handler(req, res) {
   // CORS for Expo
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -107,7 +122,15 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
+  // Ensure JSON responses even on config mistakes
   try {
+    // Fast env check (prevents HTML 500s → “Network error” in app)
+    if (!OPENAI_API_KEY) {
+      return res
+        .status(200)
+        .json({ reply: "Server error: OPENAI_API_KEY is missing.", products: [] });
+    }
+
     const body = req.body || {};
     const messages = Array.isArray(body?.messages) ? body.messages : [];
     const intake = body?.intake || {};
@@ -119,11 +142,11 @@ export default async function handler(req, res) {
     // Greeting → start intake (no products)
     if (isGreeting(userText) && !intakeComplete(intake)) {
       const kickoff =
-        "Hi! I can help with skin care. To get you the best advice, what’s your skin type (oily/dry/combination/sensitive)? And your top 1–2 concerns (e.g., acne, pigmentation, redness)?";
+        "Hi! I can help with skin care. What’s your skin type (oily/dry/combination/sensitive)? And your top 1–2 concerns (e.g., acne, pigmentation, redness)?";
       return res.status(200).json({ reply: kickoff, products: [] });
     }
 
-    // Out of scope → polite redirect
+    // Out of scope (before intake) → polite redirect
     if (!isDermTopic(userText) && !intakeComplete(intake)) {
       const refusal =
         "I can only help with dermatology and skin-care topics. For example: build a routine, pick a sunscreen, evaluate an ingredient, or get acne/pigmentation support. What would you like to work on?";
@@ -133,11 +156,11 @@ export default async function handler(req, res) {
     const needsIntake = !intakeComplete(intake);
     const metaGuard = needsIntake
       ? "IMPORTANT: Intake isn’t complete. Do NOT include links, images, or prices. Ask up to 2–3 short questions to complete intake."
-      : (allowProducts
-          ? "User may want product suggestions. Keep reasoning first, concise."
-          : "Do NOT include links/images/prices unless the user explicitly asks.");
+      : allowProducts
+      ? "User may want product suggestions. Keep reasoning first and concise."
+      : "Do NOT include links/images/prices unless the user explicitly asks.";
 
-    // Chat completion
+    // -------- Chat completion --------
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.4,
@@ -155,13 +178,11 @@ export default async function handler(req, res) {
     // Hide links/prices until intake is done and products are allowed
     reply = sanitize(reply, needsIntake || !allowProducts);
 
-    // If you ALSO want to fetch product cards here (single endpoint):
-    // Only do it when allowed AND the user clearly asked for options.
+    // (Optional) Product cards — only when allowed AND user explicitly asks
     let products = [];
     if (allowProducts) {
       const askForOptions = /\b(show|recommend|suggest|options|buy|links?)\b/i.test(userText);
       if (askForOptions) {
-        // Simple query heuristic; you can make this smarter
         const q = userText || "skincare";
         products = await fetchProducts(q);
       }
@@ -170,6 +191,8 @@ export default async function handler(req, res) {
     return res.status(200).json({ reply, products });
   } catch (err) {
     console.error("Chat API error:", err);
-    return res.status(200).json({ reply: "Sorry—something went wrong.", products: [] });
+    // Always return JSON so the client doesn't throw “Network error”
+    const msg = err?.message || String(err);
+    return res.status(200).json({ reply: "Server error: " + msg, products: [] });
   }
 }
