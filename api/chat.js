@@ -7,16 +7,16 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const SYSTEM_PROMPT = `
 You are “Skin Coach”, a friendly, casual assistant for skincare & haircare.
 
-Help with: skin/scalp types, acne, pigmentation, redness, pores, wrinkles, dandruff, hair fall, dryness/oil control, AM/PM routines, ingredients, and product guidance.
-Style: short, warm, practical (2–6 lines). Use light bullets when helpful. Emojis are okay 🌿✨.
-Never give medical diagnoses; suggest seeing a dermatologist for severe/persistent issues.
+Help with: skin/scalp types, acne, pigmentation, redness, pores, wrinkles, dandruff, hair fall,
+dryness/oil control, AM/PM routines, ingredients, and product guidance.
+Style: short, warm, practical (2–6 lines). Light bullets when helpful. Emojis okay 🌿✨.
+Give safe, general advice; no medical diagnoses. Suggest seeing a dermatologist for severe/persistent issues.
 
 Key behaviors:
-- If user asks for a routine (night/morning/AM/PM), give a **safe starter routine immediately** and ask **one** quick follow-up to tailor.
-- If user asks “which product should I use?”, suggest product **types + ingredients** and optionally 2–3 common brand examples (balanced, not promotional).
-- Only include links/prices when the user explicitly asks for “links”, “show products”, “price”, or “where to buy”.
-- If user is confused (“i don’t understand / i don’t know”), re-explain simply and invite them to pick a goal.
-- Be welcoming to brief, casual phrasing. Avoid lecturing.
+• If the user asks for a routine (night/morning/AM/PM), give a safe starter routine immediately and then ask ONE quick follow-up to tailor.
+• If the user asks “which product should I use?”, suggest product TYPES + ingredients and 2–3 common brand examples (balanced, not promotional).
+• Only include links/prices when the user explicitly asks (“links”, “show products”, “price”, “where to buy”, “buy”).
+• If the user is confused (“I don’t understand / IDK”), re-explain simply and invite them to pick a goal.
 `;
 
 /* ------------------------------- Helpers -------------------------------- */
@@ -31,16 +31,15 @@ function isConfused(t = "") {
 function askedForRoutine(t = "") {
   return /\b(routine|regimen|before bed|night|pm|am|morning|evening)\b/i.test(t);
 }
+function askedForProducts(t = "") {
+  return /\b(show|links?|prices?|price|buy|where to buy|options)\b/i.test(t);
+}
+// 🔥 improved detector for “what should I use?”-type asks
 function asksWhichProduct(t = "") {
   const x = L(t);
-  // catch more ways users ask
-  const productWords = /\b(cleanser|face ?wash|serum|moisturizer|cream|gel|toner|sunscreen|spf|mask|exfoliator|shampoo|conditioner|product|routine)\b/;
-  const askWords = /\b(which|what|recommend|suggest|use|good|best|tell me|show|should i)\b/;
-  return askWords.test(x) || (productWords.test(x) && /\b(use|buy|choose|pick|go for|tell)\b/.test(x));
-}
-function asksWhichProduct(t = "") {
-  return /\b(which|what|recommend|suggest|use|good|best)\b/i.test(L(t)) &&
-         /\b(cleanser|face wash|serum|moisturizer|cream|gel|toner|sunscreen|spf|mask|exfoliator|shampoo|conditioner)\b/i.test(L(t));
+  const productWords = /\b(cleanser|face ?wash|serum|moisturizer|cream|gel|toner|sunscreen|spf|mask|exfoliator|peel|shampoo|conditioner|product|routine)\b/;
+  const askWords = /\b(which|what|recommend|suggest|use|good|best|tell me|should i|pick|choose|go for)\b/;
+  return askWords.test(x) || (productWords.test(x) && /\b(use|buy|choose|pick|go for|tell|need)\b/.test(x));
 }
 function mentionsBudget(t = "") {
   return /\b(budget|under|below|affordable|cheap|expensive|price range)\b/i.test(L(t));
@@ -113,7 +112,11 @@ async function fetchProducts(query) {
     .slice(0, 6)
     .map((p) => ({
       title: p.title || "",
-      price: p.price || (typeof p.extracted_price === "number" ? `₹${Math.round(p.extracted_price).toLocaleString("en-IN")}` : ""),
+      price:
+        p.price ||
+        (typeof p.extracted_price === "number"
+          ? `₹${Math.round(p.extracted_price).toLocaleString("en-IN")}`
+          : ""),
       url: p.link || p.product_link || "",
       image:
         p.thumbnail ||
@@ -230,7 +233,7 @@ export default async function handler(req, res) {
     if (allowProducts && askedForProducts(userText)) {
       // Build a simple query using intake + last message
       const qParts = [];
-      if (/\b(cleanser|face wash)\b/i.test(userText)) qParts.push("cleanser");
+      if (/\b(cleanser|face ?wash)\b/i.test(userText)) qParts.push("cleanser");
       if (/\b(serum)\b/i.test(userText)) qParts.push("serum");
       if (/\b(moisturizer|cream|gel)\b/i.test(userText)) qParts.push("moisturizer");
       if (/\b(sunscreen|spf)\b/i.test(userText)) qParts.push("sunscreen");
