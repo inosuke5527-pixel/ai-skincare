@@ -1,358 +1,190 @@
 // /api/chat.js
 import OpenAI from "openai";
-
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-/* ------------------------ Skin Coach personality ------------------------ */
 const SYSTEM_PROMPT = `
-You are “Skin Coach”, a friendly, casual assistant for skincare & haircare.
-
-Help with: skin/scalp types, acne, pigmentation, redness, pores, wrinkles, dandruff, hair fall,
-dryness/oil control, AM/PM routines, ingredients, and product guidance.
-Style: short, warm, practical (2–6 lines). Light bullets when helpful. Emojis okay 🌿✨.
-Give safe, general advice; no medical diagnoses. Suggest seeing a dermatologist for severe/persistent issues.
-
-Key behaviors:
-• If user asks for a routine (night/morning/AM/PM), give a safe starter routine immediately and then ONE quick follow-up to tailor.
-• If user asks “which product should I use?” or says “I don’t know the product name”, provide 2–3 **brand/name examples** per step (Cleanser/Serum/Moisturizer) without links.
-• Only include links/prices when the user explicitly asks (“links”, “show products”, “price”, “where to buy”, “buy”).
-• If user is confused (“I don’t understand / IDK”), re-explain simply and invite them to pick a goal.
+You are “Skin Coach”, a friendly skincare & haircare guide.
+Speak casually (like texting a friend) — short, warm, practical, with emojis (🌿✨😊).
+Help with skincare & haircare: routines, product types, and general guidance. No medical advice.
+If skin type or concern is unknown, ask about it before suggesting products.
 `;
 
-/* ------------------------------- Helpers -------------------------------- */
 const L = (t = "") => t.toLowerCase();
 
 function isGreeting(t = "") {
-  return /\b(hi|hello|hey|hola|namaste|yo)\b/i.test(t);
+  return /\b(hi|hello|hey|hola|namaste)\b/i.test(t);
 }
 function isConfused(t = "") {
-  return /\b(i don.?t (know|understand)|what do you mean|explain|confused|idk)\b/i.test(L(t));
+  return /\b(i don.?t (know|understand)|idk|confused)\b/i.test(L(t));
 }
 function askedForRoutine(t = "") {
-  return /\b(routine|regimen|before bed|night|pm|am|morning|evening)\b/i.test(t);
+  return /\b(routine|before bed|night|morning|am|pm)\b/i.test(t);
 }
 function askedForProducts(t = "") {
-  return /\b(show|links?|prices?|price|buy|where to buy|options)\b/i.test(t);
+  return /\b(show|link|price|buy|shop|where to buy)\b/i.test(t);
 }
-// 🔥 treat many phrasings as “which product” + “i don’t know the product name”
 function asksWhichProduct(t = "") {
   const x = L(t);
-  const productWords = /\b(cleanser|face ?wash|serum|moisturizer|cream|gel|toner|sunscreen|spf|mask|exfoliator|peel|shampoo|conditioner|product|products|name)\b/;
-  const askWords = /\b(which|what|recommend|suggest|use|good|best|tell me|should i|pick|choose|go for|i don.?t know|don.?t know the product name|product name)\b/;
-  return askWords.test(x) || (productWords.test(x) && /\b(use|buy|choose|pick|go for|tell|need|name)\b/.test(x));
+  return (
+    /\b(which|what|recommend|suggest|use|good|best|product|name|should i)\b/i.test(x) ||
+    /\b(i don.?t know|i don.?t knwo|product name)\b/i.test(x)
+  );
 }
 function mentionsBudget(t = "") {
-  return /\b(budget|under|below|affordable|cheap|expensive|price range)\b/i.test(L(t));
-}
-function isDermTopic(t = "") {
-  const allow = [
-    "skin","skincare","dermatology","routine","am","pm","night","morning","evening",
-    "acne","pimple","blackhead","whitehead","pigment","hyperpigmentation","melasma",
-    "redness","sensitive","texture","pores","wrinkle","fine lines","glow",
-    "oil","oily","dry","combination","normal","dehydrated",
-    "hair","scalp","dandruff","seborrheic","hair fall","hair loss","frizz",
-    "cleanser","face wash","serum","toner","moisturizer","cream","gel",
-    "sunscreen","spf","mask","exfoliator","peel","retinol","retinoid",
-    "aha","bha","pha","salicylic","glycolic","lactic","mandelic","azelaic",
-    "niacinamide","vitamin c","ascorbic","ceramide","benzoyl peroxide","fragrance-free","non-comedogenic",
-  ];
-  const x = L(t);
-  return allow.some((w) => x.includes(w));
+  return /\b(budget|cheap|expensive|under|affordable|price range)\b/i.test(L(t));
 }
 
-function sanitize(text = "", hide) {
-  if (!hide) return text;
-  return text
-    .replace(/https?:\/\/\S+/g, "[link hidden]")
-    .replace(/[₹$]\s?\d[\d,.,]*/g, "[price hidden]");
-}
-
-/* ---------- Light intake memory (auto-fill from user’s wording) ---------- */
-function updateIntakeFromUtterance(intake = {}, userText = "") {
-  const x = L(userText);
-
-  if (/\boily\b/.test(x)) intake.skinType ??= "oily";
-  else if (/\bdry\b/.test(x)) intake.skinType ??= "dry";
-  else if (/\bcombo|combination\b/.test(x)) intake.skinType ??= "combination";
-  else if (/\bsensitive\b/.test(x)) intake.skinType ??= "sensitive";
-  else if (/\bnormal\b/.test(x)) intake.skinType ??= "normal";
-
-  if (/\bacne|pimple|breakout\b/.test(x)) intake.concerns ??= "acne";
-  else if (/\bpigment|dark spot|melasma\b/.test(x)) intake.concerns ??= "pigmentation";
-  else if (/\bredness|rosacea\b/.test(x)) intake.concerns ??= "redness";
-  else if (/\bwrinkle|fine line\b/.test(x)) intake.concerns ??= "wrinkles";
-  else if (/\bdandruff|flakes?\b/.test(x)) intake.concerns ??= "dandruff";
-  else if (/\bhair ?fall|hair ?loss\b/.test(x)) intake.concerns ??= "hair fall";
-
-  if (/\b(none|nothing|no allergies?)\b/.test(x)) intake.sensitivities ??= "none";
-
+function updateIntakeFromUtterance(intake = {}, text = "") {
+  const x = L(text);
+  if (/\boily\b/.test(x)) intake.skinType = "oily";
+  else if (/\bdry\b/.test(x)) intake.skinType = "dry";
+  else if (/\bcombo|combination\b/.test(x)) intake.skinType = "combination";
+  else if (/\bsensitive\b/.test(x)) intake.skinType = "sensitive";
+  if (/\bacne\b/.test(x)) intake.concerns = "acne";
+  else if (/\bpigment|dark spot\b/.test(x)) intake.concerns = "pigmentation";
+  else if (/\bhair fall|dandruff\b/.test(x)) intake.concerns = "haircare";
   return intake;
 }
 
-/* ------------------ Curated examples (brand + product names) ------------- */
-/* These are generic, commonly available lines (no links, not promotional). */
-function exampleNames({ skinType = "normal", concerns = "" } = {}) {
-  const oily = /oily/i.test(skinType);
-  const dry = /dry/i.test(skinType);
-  const acne = /acne|pimple/i.test(concerns);
-  const pigment = /pigment|dark spot|melasma/i.test(concerns);
-
-  const Cleanser = oily
-    ? [
-        "CeraVe Foaming Facial Cleanser",
-        "La Roche-Posay Effaclar Purifying Gel",
-        "Minimalist Salicylic Acid Face Wash",
-      ]
-    : dry
-    ? [
-        "CeraVe Hydrating Cleanser",
-        "Cetaphil Gentle Skin Cleanser",
-        "Simple Kind to Skin Refreshing Wash",
-      ]
-    : [
-        "CeraVe Foaming Cleanser",
-        "Simple Micellar Gel Wash",
-        "Neutrogena Ultra Gentle Cleanser",
-      ];
-
-  const Serum = acne
-    ? [
-        "The Ordinary Niacinamide 10% + Zinc 1%",
-        "Minimalist Salicylic Acid 2%",
-        "Paula’s Choice 2% BHA Liquid",
-      ]
-    : pigment
-    ? [
-        "The Ordinary Alpha Arbutin 2% + HA",
-        "Minimalist Alpha Arbutin 2%",
-        "La Roche-Posay Pure Vitamin C10",
-      ]
-    : oily
-    ? [
-        "Minimalist Niacinamide 10%",
-        "The Ordinary Niacinamide 10% + Zinc 1%",
-        "Dot & Key Niacinamide Serum",
-      ]
-    : dry
-    ? [
-        "The Ordinary Hyaluronic Acid 2% + B5",
-        "Plum 2% Hyaluronic Acid Serum",
-        "Minimalist Sepicalm 3% (calming)",
-      ]
-    : [
-        "The Ordinary Hyaluronic Acid 2% + B5",
-        "Minimalist Niacinamide 10%",
-        "Plum 2% Hyaluronic Acid Serum",
-      ];
-
-  const Moisturizer = oily
-    ? [
-        "Neutrogena Hydro Boost Water Gel",
-        "Re’equil Oil-Free Moisturizer",
-        "Clinique Dramatically Different Hydrating Jelly",
-      ]
-    : dry
-    ? [
-        "CeraVe Moisturizing Cream",
-        "Cetaphil Moisturising Cream",
-        "La Roche-Posay Toleriane Sensitive",
-      ]
-    : [
-        "CeraVe Daily Moisturizing Lotion",
-        "Cetaphil Moisturising Lotion",
-        "Re’equil Ceramide & Hyaluronic Acid Moisturizer",
-      ];
-
-  return { Cleanser, Serum, Moisturizer };
+function exampleNames(type = "normal") {
+  switch (type) {
+    case "oily":
+      return {
+        Cleanser: ["CeraVe Foaming Facial Cleanser", "La Roche-Posay Effaclar Gel", "Minimalist Salicylic Acid Wash"],
+        Serum: ["The Ordinary Niacinamide 10% + Zinc 1%", "Minimalist Niacinamide 10%", "Dot & Key Niacinamide Serum"],
+        Moisturizer: ["Neutrogena Hydro Boost Gel", "Re’equil Oil-Free Moisturizer", "Clinique Hydrating Jelly"],
+      };
+    case "dry":
+      return {
+        Cleanser: ["CeraVe Hydrating Cleanser", "Cetaphil Gentle Cleanser", "Simple Micellar Gel Wash"],
+        Serum: ["The Ordinary Hyaluronic Acid 2% + B5", "Plum Hyaluronic Serum", "Minimalist Sepicalm 3%"],
+        Moisturizer: ["CeraVe Moisturizing Cream", "Cetaphil Cream", "La Roche-Posay Toleriane Sensitive"],
+      };
+    case "sensitive":
+      return {
+        Cleanser: ["Avene Cleanance Hydrating Gel", "Simple Refreshing Cleanser", "Bioderma Sensibio"],
+        Serum: ["Avene Hydrance Serum", "La Roche-Posay Hyalu B5", "Minimalist Sepicalm 3%"],
+        Moisturizer: ["Avene Hydrance Rich Cream", "Simple Replenishing Cream", "La Shield Calming Moisturizer"],
+      };
+    default:
+      return {
+        Cleanser: ["CeraVe Foaming Cleanser", "Simple Refreshing Cleanser", "Neutrogena Gentle Cleanser"],
+        Serum: ["The Ordinary Hyaluronic Acid 2%", "Minimalist Niacinamide 10%", "Plum Hyaluronic Serum"],
+        Moisturizer: ["CeraVe Lotion", "Cetaphil Moisturizer", "Re’equil Ceramide Lotion"],
+      };
+  }
 }
 
-/* -------------------------- Google Shopping cards ------------------------ */
 async function fetchProducts(query) {
   if (!process.env.SERPAPI_KEY) return [];
-  const url = new URL("https://serpapi.com/search.json");
-  url.searchParams.set("engine", "google_shopping");
-  url.searchParams.set("q", query);
-  url.searchParams.set("gl", "in");
-  url.searchParams.set("hl", "en");
-  url.searchParams.set("api_key", process.env.SERPAPI_KEY);
-
-  const r = await fetch(url.toString(), { cache: "no-store" });
-  if (!r.ok) return [];
+  const u = new URL("https://serpapi.com/search.json");
+  u.searchParams.set("engine", "google_shopping");
+  u.searchParams.set("q", query);
+  u.searchParams.set("gl", "in");
+  u.searchParams.set("hl", "en");
+  u.searchParams.set("api_key", process.env.SERPAPI_KEY);
+  const r = await fetch(u);
   const j = await r.json();
-
   return (j.shopping_results || [])
     .slice(0, 6)
     .map((p) => ({
-      title: p.title || "",
-      price:
-        p.price ||
-        (typeof p.extracted_price === "number"
-          ? `₹${Math.round(p.extracted_price).toLocaleString("en-IN")}`
-          : ""),
-      url: p.link || p.product_link || "",
-      image:
-        p.thumbnail ||
-        p.product_photos?.[0]?.link ||
-        p.image ||
-        p.rich_product?.images?.[0] ||
-        "",
-      details: [p.source, p.condition, p.delivery].filter(Boolean).join(" • "),
+      title: p.title,
+      price: p.price || "",
+      url: p.link,
+      image: p.thumbnail,
     }))
-    .filter((p) => p.title && p.image);
+    .filter((x) => x.title);
 }
 
-/* -------------------------------- Handler -------------------------------- */
 export default async function handler(req, res) {
-  // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(204).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== "POST") return res.status(405).end();
 
-  // Env guard (never crash)
-  if (!process.env.OPENAI_API_KEY) {
-    return res.status(200).json({
-      reply: "Server error: OPENAI_API_KEY is missing.",
-      products: [],
-    });
-  }
+  if (!process.env.OPENAI_API_KEY)
+    return res.status(200).json({ reply: "Server missing API key.", products: [] });
 
   try {
     const body = req.body || {};
-    const messages = Array.isArray(body?.messages) ? body.messages : [];
-    let intake = body?.intake || {};
-    const allowProducts = body?.allowProducts ?? true; // allow product cards by default
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    let intake = body.intake || {};
+    const allowProducts = body.allowProducts ?? true;
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
-    const userText = (lastUser?.content || "").trim();
+    const text = (lastUser?.content || "").trim();
+    intake = updateIntakeFromUtterance(intake, text);
 
-    // update intake from the latest user message
-    intake = updateIntakeFromUtterance(intake, userText);
-
-    // 0) Greeting
-    if (isGreeting(userText)) {
+    // 👋 Greeting
+    if (isGreeting(text))
       return res.status(200).json({
-        reply:
-          "hey! 👋 tell me your skin or scalp type (oily, dry, combo, sensitive) and your top goal — acne, glow, dandruff, hair fall, etc. i’ll give you a quick plan.",
+        reply: "hey! 👋 tell me your skin or scalp type (oily, dry, combo, sensitive) — i’ll suggest products that really suit you.",
         products: [],
         intake,
       });
-    }
 
-    // 1) Confusion → clarify
-    if (isConfused(userText)) {
+    // 🤔 Confused
+    if (isConfused(text))
       return res.status(200).json({
-        reply:
-          "no worries 😊 here’s the simple flow: cleanse → serum → moisturize → sunscreen (AM). want me to tailor it for your skin type, or show product examples?",
+        reply: "no worries 😊 just tell me your skin type (oily, dry, combo, sensitive) and your main concern — like acne or dullness — i’ll guide you!",
         products: [],
         intake,
       });
-    }
 
-    // 2) Routine asked → give starter immediately + 1 follow-up
-    if (askedForRoutine(userText)) {
-      const type = intake.skinType || "";
-      const oily = /oily/i.test(type);
-      const dry = /dry/i.test(type);
-      const baseCleanser = dry ? "gentle, non-foaming cleanser" : "gentle gel/foaming cleanser";
-      const baseMoist = oily ? "oil-free gel moisturizer" : "light cream moisturizer";
+    // 🧴 Product question
+    if (asksWhichProduct(text)) {
+      if (!intake.skinType)
+        return res.status(200).json({
+          reply: "sure 😊 before i suggest exact products, could you tell me your skin type — oily, dry, combo, or sensitive?",
+          products: [],
+          intake,
+        });
 
-      const byConcern =
-        /acne/i.test(intake.concerns || "")
-          ? "salicylic acid (2–3×/week) or a tiny amount of benzoyl peroxide"
-          : /pigment|dark spot|melasma/i.test(intake.concerns || "")
-          ? "niacinamide (daily) or azelaic acid (most nights)"
-          : "a hydrating/calming serum (niacinamide or hyaluronic acid)";
-
-      const starter =
-        `here’s a simple **night routine** 🌙:\n` +
-        `• Cleanse → ${baseCleanser}\n` +
-        `• Treat → ${byConcern}\n` +
-        `• Moisturize → ${baseMoist}\n\n` +
-        `AM ☀️: gentle cleanse → moisturizer → SPF 30+.\n\n` +
-        `quick q: any sensitivities (fragrance/strong acids) or a budget i should keep in mind?`;
-
-      return res.status(200).json({ reply: starter, products: [], intake });
-    }
-
-    // 3) “Which product should I use?” or “I don’t know the product name” → NAMES now
-    if (asksWhichProduct(userText)) {
-      const { Cleanser, Serum, Moisturizer } = exampleNames({
-        skinType: intake.skinType || "normal",
-        concerns: intake.concerns || "",
-      });
-
-      const namesReply = [
-        "here are some **product name examples** you can look for (no links):",
-        `• **Cleanser** → ${Cleanser.slice(0, 3).join(" / ")}`,
-        `• **Serum** → ${Serum.slice(0, 3).join(" / ")}`,
-        `• **Moisturizer** → ${Moisturizer.slice(0, 3).join(" / ")}`,
+      const list = exampleNames(intake.skinType);
+      const r = [
+        `based on your **${intake.skinType} skin**, here are some product examples 👇`,
+        `• **Cleanser** → ${list.Cleanser.join(" / ")}`,
+        `• **Serum** → ${list.Serum.join(" / ")}`,
+        `• **Moisturizer** → ${list.Moisturizer.join(" / ")}`,
         "",
-        "want **links & prices** too? just say “show products for cleanser/serum/moisturizer”.",
+        "want to see prices or links? just say “show products for cleanser/serum/moisturizer 💸”.",
       ].join("\n");
-
-      return res.status(200).json({ reply: namesReply, products: [], intake });
+      return res.status(200).json({ reply: r, products: [], intake });
     }
 
-    // 4) Budget mention → acknowledge & invite product search
-    if (mentionsBudget(userText)) {
-      return res.status(200).json({
-        reply:
-          "got it — i’ll keep it budget-friendly. want me to **show products with prices** for any step? say “show products for cleanser/serum/moisturizer”.",
-        products: [],
-        intake,
-      });
-    }
-
-    // 5) Links / prices / show products → fetch shopping cards
-    if (allowProducts && askedForProducts(userText)) {
-      // Build a simple query using intake + last message
-      const qParts = [];
-      if (/\b(cleanser|face ?wash)\b/i.test(userText)) qParts.push("cleanser");
-      if (/\b(serum)\b/i.test(userText)) qParts.push("serum");
-      if (/\b(moisturizer|cream|gel)\b/i.test(userText)) qParts.push("moisturizer");
-      if (/\b(sunscreen|spf)\b/i.test(userText)) qParts.push("sunscreen");
-      if (/\b(shampoo|conditioner)\b/i.test(userText)) qParts.push("shampoo");
-      if (intake.concerns) qParts.push(intake.concerns);
-      if (intake.skinType) qParts.push(intake.skinType);
-      const query = (qParts.join(" ") || userText || "skincare").trim();
-
+    // 💸 Show products with links
+    if (allowProducts && askedForProducts(text)) {
+      const query = `${intake.skinType || ""} ${intake.concerns || ""} skincare`;
       const products = await fetchProducts(query);
-      const reply = products.length
-        ? `here are some options for **${query}**. want me to narrow by budget or ingredients?`
-        : `i couldn’t find good matches for **${query}**. try “show products for niacinamide serum” or “oil-free gel moisturizer”.`;
-
-      return res.status(200).json({ reply, products, intake });
-    }
-
-    // 6) Out of scope (gentle)
-    if (!isDermTopic(userText)) {
       return res.status(200).json({
-        reply:
-          "i focus on skin & hair care 🌿 — routines, acne, pigmentation, dandruff, hair fall, and what products to use. what would you like help with?",
-        products: [],
+        reply: `here are some options for **${query}**! want me to sort by budget?`,
+        products,
         intake,
       });
     }
 
-    // 7) Normal AI reply (reasoning/chat)
+    // 🌙 Routine
+    if (askedForRoutine(text))
+      return res.status(200).json({
+        reply:
+          "here’s a quick **night routine** 🌙\n• Cleanse → gentle cleanser\n• Serum → niacinamide or hyaluronic acid\n• Moisturizer → light cream\nAM ☀️ → Cleanse → Moisturize → SPF 30+.\nwant me to tailor it for your skin type?",
+        products: [],
+        intake,
+      });
+
+    // 💬 Fallback AI
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.45,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...messages,
-      ],
+      messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
     });
 
-    let reply =
+    const reply =
       completion.choices?.[0]?.message?.content?.trim() ||
-      "could you say that a bit differently?";
-    reply = sanitize(reply, false);
-
+      "could you repeat that for me?";
     return res.status(200).json({ reply, products: [], intake });
-  } catch (err) {
-    console.error("Chat API error:", err);
-    return res.status(200).json({ reply: "oops, something went wrong.", products: [] });
+  } catch (e) {
+    console.error(e);
+    return res.status(200).json({ reply: "something went wrong.", products: [] });
   }
 }
