@@ -1,90 +1,186 @@
-// ai-skincare/api/chat.js
-// Crash-proof chat route. Returns JSON even if OpenAI package or key is missing.
+// /api/chat.js
+import OpenAI from "openai";
 
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// --- SYSTEM PROMPT ---
+const SYSTEM_PROMPT = process.env.SKIN_COACH_SYSTEM_PROMPT ?? `
+You are “Skin Coach”, a friendly dermatologist-informed assistant for a skincare and haircare app.
+
+SCOPE: You can help with dermatology, skincare, and haircare topics — including skin types, scalp issues, hair fall, dandruff, dryness, oil control, ingredients, suitability, patch testing, and lifestyle impacts.
+If out of scope → say: “I can only help with dermatology, skin, and hair-care topics.” Then offer examples of what you can help with.
+
+INTAKE FIRST: Before recommending products or showing links/images/prices, collect essentials:
+1) Skin or scalp type (oily/dry/combination/sensitive/normal)
+2) Main concerns (acne, pigmentation, dandruff, hair fall, redness, wrinkles)
+3) Sensitivities/allergies + active medications (e.g., isotretinoin, pregnancy, breastfeeding)
+4) Current routine basics (AM/PM) + budget range
+Ask max 2–3 short questions at a time. Be warm and concise.
+
+RECOMMENDATIONS:
+- After intake is complete, suggest care routines and key ingredients first (what/why/how often).
+- Only mention specific products if the user asks for them.
+- Add links/prices only when explicitly requested.
+
+FOLLOW-UPS:
+- If asked “Is this product good for me?”, evaluate based on their profile, give a short verdict, and suggest how to patch-test.
+- Avoid medical diagnosis or prescriptions. Recommend seeing a dermatologist for severe or persistent issues.
+
+TONE: Empathetic, clear, and concise — like a friendly expert who genuinely wants to help.
+`;
+
+// --- HELPERS ---
+function isGreeting(t = "") {
+  return /\b(hi|hello|hey|hola|namaste|yo)\b/i.test(t);
+}
+
+function isDermTopic(t = "") {
+  const allow = [
+    "skin", "skincare", "dermatology", "acne", "pimple", "blackhead", "whitehead",
+    "hyperpigmentation", "melasma", "dark spots", "wrinkle", "fine lines",
+    "rosacea", "eczema", "psoriasis", "seborrheic", "dandruff", "scalp",
+    "hair", "hair fall", "hair loss", "oily scalp", "dry scalp", "frizz",
+    "spf", "sunscreen", "niacinamide", "retinol", "retinoid", "aha", "bha",
+    "salicylic", "glycolic", "lactic", "azelaic", "ceramide", "moisturizer",
+    "cleanser", "toner", "serum", "patch test", "non-comedogenic",
+    "oil control", "vitamin c", "ascorbic", "fragrance-free", "benzoyl peroxide"
+  ];
+  const x = t.toLowerCase();
+  return allow.some((w) => x.includes(w));
+}
+
+function intakeComplete(intake) {
+  if (!intake) return false;
+  const req = ["skinType", "concerns", "sensitivities", "routineBasics"];
+  return req.every((k) => intake[k] && String(intake[k]).trim().length > 0);
+}
+
+function sanitize(text = "", hide) {
+  if (!hide) return text;
+  return text
+    .replace(/https?:\/\/\S+/g, "[link hidden until we finish your profile]")
+    .replace(/[₹$]\s?\d[\d,.,]*/g, "[price hidden until we finish your profile]");
+}
+
+// --- PRODUCT FETCHER ---
+async function fetchProducts(query) {
+  const url = new URL("https://serpapi.com/search.json");
+  url.searchParams.set("engine", "google_shopping");
+  url.searchParams.set("q", query);
+  url.searchParams.set("gl", "in");
+  url.searchParams.set("hl", "en");
+  url.searchParams.set("api_key", process.env.SERPAPI_KEY);
+
+  const r = await fetch(url.toString(), { cache: "no-store" });
+  if (!r.ok) return [];
+  const j = await r.json();
+
+  return (j.shopping_results || [])
+    .slice(0, 6)
+    .map((p) => {
+      const image =
+        p.thumbnail ||
+        p.product_photos?.[0]?.link ||
+        p.image ||
+        p.rich_product?.images?.[0] ||
+        null;
+
+      const priceINR =
+        typeof p.extracted_price === "number" ? Math.round(p.extracted_price) : null;
+
+      return {
+        title: p.title || "",
+        priceINR,
+        price: priceINR
+          ? `₹${priceINR.toLocaleString("en-IN")}`
+          : p.price || "",
+        url: p.link || p.product_link || null,
+        image,
+        details: [p.source, p.condition, p.delivery].filter(Boolean).join(" • "),
+      };
+    })
+    .filter((p) => p.title && p.image);
+}
+
+// --- MAIN HANDLER ---
 export default async function handler(req, res) {
-  // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
+  // Check for missing API key
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(200).json({
+      reply: "Server error: OPENAI_API_KEY is missing (set it in Vercel → Project → Settings → Environment Variables).",
+      products: []
+    });
+  }
+
   try {
-    // 1) Check env
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-    if (!OPENAI_API_KEY) {
-      return res.status(200).json({
-        reply: "Server error: OPENAI_API_KEY is missing (set it in Vercel → Project → Settings → Environment Variables).",
-        products: [],
-      });
-    }
-
-    // 2) Load OpenAI safely (won’t crash if not installed)
-    let OpenAI;
-    try {
-      ({ default: OpenAI } = await import("openai")); // dynamic import, safe in any module mode
-    } catch (e) {
-      return res.status(200).json({
-        reply: "Server error: The 'openai' package is not installed. Run 'npm i openai' in the repo and redeploy.",
-        products: [],
-      });
-    }
-
-    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-    // 3) Read request
     const body = req.body || {};
-    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const messages = Array.isArray(body?.messages) ? body.messages : [];
+    const intake = body?.intake || {};
+    const allowProducts = !!body?.allowProducts;
+
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
-    const text = (lastUser?.content || "").trim();
+    const userText = (lastUser?.content || "").trim();
 
-    // 4) Scope + greeting guards (simple, you can expand later)
-    if (/^(hi|hello|hey)\b/i.test(text)) {
-      return res.status(200).json({
-        reply: "Hi! 👋 I’m your Skin Coach. What’s your skin type (oily, dry, combination, sensitive)?",
-        products: [],
-      });
-    }
-    const skincareWords = [
-      "skin","skincare","dermatology","acne","pimple","blackhead","whitehead",
-      "pigmentation","melasma","dark spots","wrinkle","fine lines","rosacea",
-      "eczema","psoriasis","dandruff","spf","sunscreen","niacinamide","retinol",
-      "salicylic","glycolic","aha","bha","ceramide","moisturizer","cleanser",
-      "toner","serum","barrier","oil control","sensitive","dry","oily","combination"
-    ];
-    const inScope = skincareWords.some((w) => text.toLowerCase().includes(w));
-    if (!inScope) {
-      return res.status(200).json({
-        reply: "I can only help with dermatology and skin-care topics. 😊 Tell me your skin type and main concern?",
-        products: [],
-      });
+    // Greeting → ask intake
+    if (isGreeting(userText) && !intakeComplete(intake)) {
+      const kickoff =
+        "Hi! 👋 I can help you with your skin and hair care. To start, what’s your skin or scalp type (oily, dry, combination, sensitive)? And your main concerns (like acne, dandruff, pigmentation, or hair fall)?";
+      return res.status(200).json({ reply: kickoff, products: [] });
     }
 
-    // 5) Actual completion
-    const SYSTEM_PROMPT = `
-You are “Skin Coach”, a friendly dermatologist-informed assistant.
-Only discuss dermatology and skincare. Be short, warm, and clear.
-Before suggesting products, ask for skin type, main concerns, and sensitivities.
-`;
+    // Out of scope
+    if (!isDermTopic(userText) && !intakeComplete(intake)) {
+      const refusal =
+        "I can only help with dermatology, skin, and hair-care topics — like acne, pigmentation, dandruff, or hair fall. What would you like to work on?";
+      return res.status(200).json({ reply: refusal, products: [] });
+    }
 
+    const needsIntake = !intakeComplete(intake);
+    const metaGuard = needsIntake
+      ? "IMPORTANT: Intake isn’t complete. Don’t include links, images, or prices. Ask 2–3 short questions to complete intake."
+      : (allowProducts
+          ? "User may want product suggestions — be concise and relevant."
+          : "Don’t include links/images/prices unless explicitly asked.");
+
+    // Chat completion
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.5,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: metaGuard },
         ...messages,
       ],
     });
 
-    const reply =
+    let reply =
       completion.choices?.[0]?.message?.content?.trim() ||
-      "Sorry, could you rephrase that?";
+      "Sorry—could you say that another way?";
 
-    return res.status(200).json({ reply, products: [] });
+    reply = sanitize(reply, needsIntake || !allowProducts);
+
+    // Optional product fetching
+    let products = [];
+    if (allowProducts) {
+      const askForOptions = /\b(show|recommend|suggest|options|buy|links?)\b/i.test(userText);
+      if (askForOptions) {
+        const q = userText || "skincare";
+        products = await fetchProducts(q);
+      }
+    }
+
+    return res.status(200).json({ reply, products });
   } catch (err) {
     console.error("Chat API error:", err);
-    return res
-      .status(200)
-      .json({ reply: "Server error: " + (err?.message || String(err)), products: [] });
+    return res.status(200).json({
+      reply: "Sorry—something went wrong.",
+      products: []
+    });
   }
 }
