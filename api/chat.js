@@ -110,7 +110,6 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  // Check for missing API key
   if (!process.env.OPENAI_API_KEY) {
     return res.status(200).json({
       reply: "Server error: OPENAI_API_KEY is missing (set it in Vercel → Project → Settings → Environment Variables).",
@@ -121,24 +120,35 @@ export default async function handler(req, res) {
   try {
     const body = req.body || {};
     const messages = Array.isArray(body?.messages) ? body.messages : [];
-    const intake = body?.intake || {};
+    let intake = body?.intake || {};
     const allowProducts = !!body?.allowProducts;
 
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const userText = (lastUser?.content || "").trim();
 
-    // Greeting → ask intake
+    // --- Basic smart detection for intake ---
+    if (/oily|dry|combination|sensitive|normal/i.test(userText)) {
+      intake.skinType = userText;
+    }
+    if (/acne|pigment|wrinkle|dandruff|hair fall|redness|texture/i.test(userText)) {
+      intake.concerns = userText;
+    }
+    if (/nothing|none|no|not at all/i.test(userText)) {
+      if (!intake.sensitivities) intake.sensitivities = "none";
+    }
+
+    // Greeting → start intake
     if (isGreeting(userText) && !intakeComplete(intake)) {
       const kickoff =
-        "Hi! 👋 I can help you with your skin and hair care. To start, what’s your skin or scalp type (oily, dry, combination, sensitive)? And your main concerns (like acne, dandruff, pigmentation, or hair fall)?";
-      return res.status(200).json({ reply: kickoff, products: [] });
+        "Hi! 👋 I can help with your skin and hair care. What’s your skin or scalp type (oily, dry, combination, sensitive)? And your top concern — acne, pigmentation, dandruff, or hair fall?";
+      return res.status(200).json({ reply: kickoff, products: [], intake });
     }
 
     // Out of scope
     if (!isDermTopic(userText) && !intakeComplete(intake)) {
       const refusal =
         "I can only help with dermatology, skin, and hair-care topics — like acne, pigmentation, dandruff, or hair fall. What would you like to work on?";
-      return res.status(200).json({ reply: refusal, products: [] });
+      return res.status(200).json({ reply: refusal, products: [], intake });
     }
 
     const needsIntake = !intakeComplete(intake);
@@ -148,7 +158,6 @@ export default async function handler(req, res) {
           ? "User may want product suggestions — be concise and relevant."
           : "Don’t include links/images/prices unless explicitly asked.");
 
-    // Chat completion
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.5,
@@ -165,7 +174,6 @@ export default async function handler(req, res) {
 
     reply = sanitize(reply, needsIntake || !allowProducts);
 
-    // Optional product fetching
     let products = [];
     if (allowProducts) {
       const askForOptions = /\b(show|recommend|suggest|options|buy|links?)\b/i.test(userText);
@@ -175,7 +183,7 @@ export default async function handler(req, res) {
       }
     }
 
-    return res.status(200).json({ reply, products });
+    return res.status(200).json({ reply, products, intake });
   } catch (err) {
     console.error("Chat API error:", err);
     return res.status(200).json({
