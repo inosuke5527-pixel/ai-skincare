@@ -2,35 +2,44 @@ import OpenAI from "openai";
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export default async function handler(req, res) {
-  // --- CORS setup ---
+  // ---- CORS setup ----
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(204).end();
-
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
   try {
     const { messages = [], intake = {}, allowProducts = true } = req.body || {};
-    const lastMsg = messages[messages.length - 1]?.content?.toLowerCase() || "";
+    const userText = messages[messages.length - 1]?.content?.toLowerCase() || "";
     let newIntake = { ...intake };
 
-    // --- detect & store info ---
-    const skinMatch = lastMsg.match(
+    // --- detect & store user info ---
+    const skinMatch = userText.match(
       /\b(oily|dry|combination|combo|sensitive|normal)\b/
     );
     if (skinMatch)
       newIntake.skinType =
         skinMatch[1] === "combo" ? "combination" : skinMatch[1];
 
-    const concernMatch = lastMsg.match(
+    const concernMatch = userText.match(
       /\b(acne|pigmentation|wrinkles|redness|dullness|dark spots|hair fall|dandruff)\b/
     );
     if (concernMatch) newIntake.concern = concernMatch[1];
 
+    const hasSkinType = !!newIntake.skinType;
+
+    // --- detect topic intent ---
+    const isFoodQuestion = /\b(food|eat|diet|nutrition|fruit|vegetable|drink|what should i eat)\b/.test(
+      userText
+    );
+    const isProductQuestion = /\b(which|what|recommend|product|use|should i)\b/.test(
+      userText
+    );
+
     // --- product list by skin type ---
-    const products = {
+    const productList = {
       oily: {
         Cleanser: [
           "CeraVe Foaming Facial Cleanser",
@@ -51,7 +60,7 @@ export default async function handler(req, res) {
       dry: {
         Cleanser: [
           "CeraVe Hydrating Cleanser",
-          "Cetaphil Gentle Skin Cleanser",
+          "Cetaphil Gentle Cleanser",
           "Simple Micellar Gel Wash",
         ],
         Serum: [
@@ -101,18 +110,58 @@ export default async function handler(req, res) {
       },
     };
 
-    // --- when user asks about products ---
-    if (/\b(which|what|recommend|product|use|should i)\b/.test(lastMsg)) {
-      if (!newIntake.skinType) {
+    // --- food recommendations by skin type ---
+    const foodTips = {
+      oily: `For oily skin 🍋:
+• Eat zinc-rich foods (pumpkin seeds, lentils)
+• Add omega-3 (salmon, chia seeds, walnuts)
+• Fresh veggies like spinach & cucumber
+• Avoid fried foods & too much dairy
+Drink plenty of water 💧 to control oil.`,
+      dry: `For dry skin 🥑:
+• Include healthy fats (avocado, olive oil, nuts)
+• Eat vitamin E foods (almonds, sunflower seeds)
+• Drink more water & coconut water
+• Add sweet potatoes, carrots, and berries for glow ✨`,
+      combination: `For combination skin 🍎:
+• Balance with fruits like apple, orange, papaya
+• Eat vitamin A & C foods (carrot, citrus, kiwi)
+• Stay hydrated
+• Avoid too much sugar or spicy foods.`,
+      sensitive: `For sensitive skin 🍓:
+• Eat anti-inflammatory foods (oats, blueberries, turmeric)
+• Include omega-3 (flaxseed, salmon)
+• Avoid spicy foods & processed snacks
+• Drink chamomile or green tea ☕ for calming effect.`,
+    };
+
+    // --- if user asks about food ---
+    if (isFoodQuestion) {
+      if (!hasSkinType) {
         return res.status(200).json({
           reply:
-            "Sure 😊 but first — could you tell me your skin type? oily, dry, combination, or sensitive?",
+            "Sure 😊 first tell me your skin type — oily, dry, combination, or sensitive — so I can suggest the right foods for you!",
           intake: newIntake,
           products: [],
         });
       }
-      const list = products[newIntake.skinType] || products.normal;
-      const reply = `For your **${newIntake.skinType} skin**, here are some good picks 💧:\n\n` +
+      const reply = foodTips[newIntake.skinType] || foodTips.combination;
+      return res.status(200).json({ reply, intake: newIntake, products: [] });
+    }
+
+    // --- if user asks about products ---
+    if (isProductQuestion) {
+      if (!hasSkinType) {
+        return res.status(200).json({
+          reply:
+            "Sure 😊 but first — what’s your skin type? oily, dry, combination, or sensitive?",
+          intake: newIntake,
+          products: [],
+        });
+      }
+      const list = productList[newIntake.skinType];
+      const reply =
+        `For your **${newIntake.skinType} skin**, here are some great picks 💧:\n\n` +
         `**Cleanser:** ${list.Cleanser.join(" / ")}\n` +
         `**Serum:** ${list.Serum.join(" / ")}\n` +
         `**Moisturizer:** ${list.Moisturizer.join(" / ")}\n\n` +
@@ -120,23 +169,18 @@ export default async function handler(req, res) {
       return res.status(200).json({ reply, intake: newIntake, products: [] });
     }
 
-    // --- special rule: if skin type known, don’t re-ask ---
-    const hasSkin = !!newIntake.skinType;
-
-    // --- improved system prompt ---
-    const systemPrompt = `
-You are "Skin Coach", a friendly beauty & skincare AI 🧴✨
-- You remember user's skin type and concern.
-- If already known, never ask again.
-- You can also give food, nutrition, lifestyle, or hair advice that supports healthy skin.
-- Always stay warm, short, and friendly with emojis.
-User skin type: ${newIntake.skinType || "unknown"}.
-Main concern: ${newIntake.concern || "none"}.
+    // --- General fallback (chat memory) ---
+    const context = `
+You are "AI Coach", a friendly skincare & haircare guide 🧴✨
+You remember user info and personalize responses.
+Skin type: ${newIntake.skinType || "unknown"}.
+Concern: ${newIntake.concern || "none"}.
+If user already told skin type, never ask again.
+Keep tone short, caring, and emoji-friendly.
 `;
 
-    // --- combine messages ---
     const chat = [
-      { role: "system", content: systemPrompt },
+      { role: "system", content: context },
       ...messages.map((m) => ({ role: m.role, content: m.content })),
     ];
 
@@ -146,17 +190,12 @@ Main concern: ${newIntake.concern || "none"}.
       messages: chat,
     });
 
-    let reply = completion.choices?.[0]?.message?.content?.trim() || "Okay!";
-    if (!hasSkin && !/skin type/i.test(reply)) {
-      reply +=
-        "\n(Oh, btw — what’s your skin type? oily, dry, combination, or sensitive?)";
-    }
-
+    const reply = completion.choices?.[0]?.message?.content?.trim() || "Okay!";
     res.status(200).json({ reply, intake: newIntake, products: [] });
   } catch (err) {
     console.error("chat error:", err);
     res.status(200).json({
-      reply: "Oops 😅 something went wrong.",
+      reply: "Oops 😅 something went wrong. Try again!",
       intake: {},
       products: [],
     });
