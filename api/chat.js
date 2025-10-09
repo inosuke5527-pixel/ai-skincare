@@ -1,102 +1,80 @@
 // api/chat.js
 export default async function handler(req, res) {
-  // --- Allow CORS so your app can call this from anywhere ---
+  // CORS headers for browser tools (Hoppscotch/Postman in browser)
   const CORS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Content-Type": "application/json"
   };
 
-  // --- Handle browser preflight ---
-  if (req.method === "OPTIONS") {
-    return res.status(200).set(CORS).end();
+  // Helper to send JSON with headers
+  function send(status, obj) {
+    res.writeHead(status, CORS);
+    res.end(JSON.stringify(obj));
   }
 
-  // --- Only accept POST requests ---
-  if (req.method !== "POST") {
-    return res.status(405).set(CORS).json({ error: "Use POST" });
-  }
+  if (req.method === "OPTIONS") return send(200, { ok: true });
+  if (req.method !== "POST")   return send(405, { error: "Use POST" });
 
   try {
     const { messages = [], profile = {} } = req.body || {};
-
-    if (!Array.isArray(messages)) {
-      return res
-        .status(400)
-        .set(CORS)
-        .json({ error: "messages array required" });
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return send(400, { error: "messages array required" });
     }
 
-    // --- Check if message is about hair ---
-    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    // Detect hair intent so it won’t ask about skin type on hair questions
+    const lastUser = [...messages].reverse().find(m => m?.role === "user");
     const lastText = (lastUser?.content || "").toLowerCase();
-    const isHair =
-      /\b(hair|shampoo|conditioner|scalp|dandruff|hairfall|split ends|heat protect|wash my hair)\b/i.test(
-        lastText
-      );
+    const isHair = /\b(hair|shampoo|conditioner|scalp|dandruff|hairfall|split ends|heat protect|wash my hair)\b/i.test(lastText);
 
-    // --- System prompt for the AI ---
     const systemMessage = {
       role: "system",
       content: `
-You are a friendly AI skincare and haircare coach.
+You are a friendly AI coach for skincare & haircare.
 User profile: ${JSON.stringify(profile)}
-
 Rules:
-- If the question is about HAIR, answer only about hair — don’t ask for skin type.
-- If the question is about SKIN, use the saved skin type from profile if available.
-- Don’t repeat questions like “what’s your skin type” more than once.
-- Use short, clear bullet points for advice.
-- Offer gentle tone, emojis allowed but not too many.
-- If user asks for product examples, give 2–3 common items available in India.
-    `.trim(),
+- If the message is about HAIR, answer only about hair (do NOT ask for skin type).
+- If it's about SKIN, use the profile data; ask for missing info only once.
+- Avoid repeating the same question.
+- Keep it concise with practical bullet points; 2–3 example products if asked.
+`.trim()
     };
 
-    // --- If it’s about hair, add a quick note ---
     const hairHint = isHair
-      ? {
-          role: "system",
-          content:
-            "The user is asking about hair. Focus strictly on haircare (avoid skin talk).",
-        }
+      ? { role: "system", content: "This user is asking about HAIR. Focus only on haircare." }
       : null;
 
-    const finalMessages = hairHint
-      ? [systemMessage, hairHint, ...messages]
-      : [systemMessage, ...messages];
+    const finalMessages = hairHint ? [systemMessage, hairHint, ...messages] : [systemMessage, ...messages];
 
-    // --- Call OpenAI ChatGPT API ---
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    // Call OpenAI
+    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        messages: finalMessages,
-        temperature: 0.5,
-      }),
+        temperature: 0.4,
+        messages: finalMessages
+      })
     });
 
-    if (!response.ok) {
-      const errText = await response.text().catch(() => "");
-      return res
-        .status(response.status)
-        .set(CORS)
-        .json({ error: "OpenAI request failed", details: errText });
+    // If upstream fails, return the text so you can see why in Hoppscotch
+    const rawText = await upstream.text();
+    if (!upstream.ok) {
+      return send(upstream.status, { error: "OpenAI upstream error", detail: rawText.slice(0, 2000) });
     }
 
-    const data = await response.json();
-    const reply =
-      data?.choices?.[0]?.message?.content ||
-      "Sorry, I couldn’t get a response right now.";
+    let data;
+    try { data = JSON.parse(rawText); } catch {
+      return send(502, { error: "Bad JSON from upstream", detail: rawText.slice(0, 2000) });
+    }
 
-    return res.status(200).set(CORS).json({ reply });
+    const reply = data?.choices?.[0]?.message?.content || "Sorry, I couldn’t respond right now.";
+    return send(200, { reply });
   } catch (err) {
-    return res
-      .status(500)
-      .set(CORS)
-      .json({ error: err.message || "Server error" });
+    return send(500, { error: String(err) });
   }
 }
