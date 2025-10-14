@@ -54,18 +54,29 @@ export default async function handler(req, res) {
     const lastUser = [...messages].reverse().find((m) => m?.role === "user");
     const lastText = (lastUser?.content || "");
     const userLang = detectLang(lastText);
+    const isGreeting = /\b(hi|hello|hey|yo|hola|merhaba|नमस्ते|salam|selam|सलाम)\b/i.test(lastTextRaw);
 
     // Hard scope gate: refuse off-topic before calling OpenAI
     if (!isDermQuery(lastText)) {
-      const REFUSALS = {
-  hi: "Hey 💖, main skincare aur haircare expert hoon! Batao, tumhe kis skin ya hair concern mein help chahiye?",
-  ar: "هاي 🌸! يمكنني المساعدة في العناية بالبشرة أو الشعر فقط، ما نوع مشكلتك؟",
-  ru: "Привет 🌿! Я помогаю с уходом за кожей и волосами. Расскажи, что беспокоит?",
-  tr: "Merhaba 🌸! Cilt bakımı veya saç bakımıyla ilgili yardımcı olabilirim. Hangi konuda konuşalım?",
-  en: "Hey there 🌿! I can help with skincare or haircare — tell me what’s bothering you?",
-};
-      return send(200, { reply: REFUSALS[userLang] || REFUSALS.en });
-    }
+  if (isGreeting) {
+    const HELLO = {
+      hi: "नमस्ते! 🌿 मैं स्किन/हेयर के बारे में मदद कर सकता/सकती हूँ — किस परेशानी में मदद चाहिए?",
+      ar: "مرحبًا! 🌿 أستطيع مساعدتك في العناية بالبشرة أو الشعر — ما الذي يزعجك؟",
+      tr: "Merhaba! 🌿 Cilt veya saç bakımı hakkında yardımcı olabilirim — sorun nedir?",
+      ru: "Привет! 🌿 Помогу с уходом за кожей или волосами — что беспокоит?",
+      en: "Hey there! 🌿 I can help with skincare or haircare — what’s bothering you?",
+    };
+    return send(200, { reply: HELLO[userLang] || HELLO.en });
+  }
+  const REFUSALS = {
+    hi: "माफ़ कीजिए, मैं केवल स्किनकेयर/हेयरकेयर में मदद करता/करती हूँ। कृपया इसी विषय में पूछें।",
+    ar: "عذرًا، يمكنني المساعدة فقط في العناية بالبشرة والشعر والأمراض الجلدية.",
+    tr: "Üzgünüm, yalnızca cilt ve saç bakımı/dermatoloji konularında yardımcı olabilirim.",
+    ru: "Извините, я отвечаю только по уходу за кожей, волосами и дерматологии.",
+    en: "Sorry—I can help only with skincare, haircare, and dermatology.",
+  };
+  return send(200, { reply: REFUSALS[userLang] || REFUSALS.en });
+}
 
     // Hair-only hint
     const isHair = /\b(hair|shampoo|conditioner|scalp|dandruff|hairfall|hair loss|split ends|heat protect|wash my hair)\b/i.test(
