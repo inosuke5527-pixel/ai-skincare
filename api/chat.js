@@ -54,14 +54,13 @@ export default async function handler(req, res) {
 
     // Topics we support (dermatology: skin + hair)
     const dermTerms = [
-      // skin
-      "skin","skincare","pimple","pimples","acne","acnes","zit","blackhead","whitehead",
-      "sunscreen","sun screen","spf","moisturizer","moisturiser","cleanser","facewash","face wash",
-      "toner","serum","retinol","niacinamide","vitamin c","glycolic","salicylic","aha","bha",
-      "hyperpigmentation","melasma","dark spots","redness","rosacea","eczema","psoriasis","dermatitis",
-      // hair
-      "hair","haircare","shampoo","conditioner","scalp","dandruff","hairfall","hair loss","split ends","heat protect"
-    ];
+  "skin","face","chehra","chehre","issue","problem",
+  "pimple","pimples","daane","daag","rash","rashes","redness","itch","khujli","allergy",
+  "acne","blackhead","whitehead","sunscreen","spf","moisturizer","cleanser","facewash",
+  "toner","serum","retinol","niacinamide","vitamin c","glycolic","salicylic","aha","bha",
+  "hyperpigmentation","melasma","dark spots","eczema","psoriasis","dermatitis",
+  "hair","baal","bal","haircare","shampoo","conditioner","scalp","dandruff","hairfall","hair loss","split ends","heat protect"
+];
     const offTopicTerms = [
       "laptop","phone","mobile","iphone","android","computer","pc","gpu","cpu","tv","camera",
       "car","bike","crypto","bitcoin","stocks","tax","visa","flight","hotel","football","game"
