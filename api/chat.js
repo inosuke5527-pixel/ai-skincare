@@ -27,12 +27,19 @@ export default async function handler(req, res) {
 
     // === quick language detection ===
     const detectLang = (s = "") => {
-      if (/[ऀ-ॿ]/.test(s)) return "hi"; // Hindi
-      if (/[اأإآء-ي]/.test(s)) return "ar"; // Arabic
-      if (/[а-яё]/i.test(s)) return "ru"; // Russian
-      if (/[ğüşöçıİĞÜŞÖÇ]/i.test(s)) return "tr"; // Turkish
-      return "en";
-    };
+  // Script-based
+  if (/[ऀ-ॿ]/.test(s)) return "hi"; // Devanagari Hindi
+  if (/[اأإآء-ي]/.test(s)) return "ar"; // Arabic
+  if (/[а-яё]/i.test(s)) return "ru"; // Russian
+  if (/[ğüşöçıİĞÜŞÖÇ]/i.test(s)) return "tr"; // Turkish
+
+  // Roman Hindi / Hinglish words
+  if (/\b(kaise|kese|ho|nahi|haan|mera|meri|tum|tera|acha|acne|chehra|bal|skin|dikh|help kar|hai|madad)\b/i.test(s))
+    return "hi";
+
+  // Default fallback
+  return "en";
+};
     const userLang = detectLang(lastTextRaw);
 
     // === greetings ===
