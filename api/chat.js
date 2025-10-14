@@ -153,8 +153,21 @@ User profile (may be empty): ${JSON.stringify(profile)}
       return send(502, { error: "Bad JSON from upstream", detail: rawText.slice(0, 2000) });
     }
 
-    const reply = data?.choices?.[0]?.message?.content || "Sorry, I couldn’t respond right now.";
-    return send(200, { reply });
+    let reply = data?.choices?.[0]?.message?.content?.trim() || "";
+
+if (!reply || reply.toLowerCase() === "okay!" || reply.toLowerCase() === "ok") {
+  // fallback: friendly default in user's language
+  const friendly = {
+    hi: "ज़रूर 🌿! बताइए, आपकी स्किन या बालों से जुड़ी क्या परेशानी है?",
+    en: "Of course 🌿! Tell me what’s bothering you about your skin or hair.",
+    ar: "بالطبع 🌿! أخبرني ما المشكلة في بشرتك أو شعرك؟",
+    tr: "Tabii ki 🌿! Cilt veya saçınla ilgili hangi konuda yardım istiyorsun?",
+    ru: "Конечно 🌿! Расскажи, что беспокоит твою кожу или волосы?",
+  };
+  reply = friendly[userLang] || friendly.en;
+}
+
+return send(200, { reply });
   } catch (err) {
     return send(500, { error: String(err) });
   }
