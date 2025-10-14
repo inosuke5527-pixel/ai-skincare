@@ -34,15 +34,14 @@ export default async function handler(req, res) {
     const lastTextRaw = (lastUser?.content || "").trim();
     const lastText = lastTextRaw.toLowerCase();
 
+    // Detect UI language (script + some romanized hints)
     const detectLang = (s = "") => {
-      // Script-based
-      if (/[ऀ-ॿ]/.test(s)) return "hi";         // Hindi (Devanagari)
-      if (/[اأإآء-ي]/.test(s)) return "ar";       // Arabic
-      if (/[а-яё]/i.test(s)) return "ru";        // Russian
-      if (/[ğüşöçıİĞÜŞÖÇ]/i.test(s)) return "tr";// Turkish
-      // Roman Hindi / Hinglish
-      if (/\b(kaise|kese|kya|kyu|nahi|haan|madad|meri|mera|chehra|dikh|acne|pimples|sunscreen|moisturizer|baal|bal|dandruff|scalp)\b/i.test(s))
-        return "hi";
+      if (/[ऀ-ॿ]/.test(s)) return "hi";                 // Hindi (Devanagari)
+      if (/[اأإآء-ي]/.test(s)) return "ar";             // Arabic
+      if (/[а-яё]/i.test(s)) return "ru";               // Russian
+      if (/[ğüşöçıİĞÜŞÖÇ]/i.test(s)) return "tr";       // Turkish
+      // Roman Hindi / Hinglish hints:
+      if (/\b(kaise|kese|kya|kyu|nahi|haan|madad|meri|mera|chehra|chehre|dard|khujli|daane|daag)\b/i.test(s)) return "hi";
       return "en";
     };
 
@@ -50,49 +49,42 @@ export default async function handler(req, res) {
       ? localeFromApp
       : detectLang(lastTextRaw);
 
-    const isGreeting = /\b(hi|hello|hey|yo|namaste|namaskar|salam|as\-?salaam|kaise ho|kese ho|what's up|sup)\b/i.test(lastText);
+    const isGreeting = /\b(hi|hello|hey|yo|namaste|namaskar|salam|as-?salaam|what'?s up|sup|hola|merhaba|privet)\b/i
+      .test(lastText);
 
-    // Topics we support (dermatology: skin + hair)
-    const dermTerms = [
-  "skin","face","chehra","chehre","issue","problem",
-  "pimple","pimples","daane","daag","rash","rashes","redness","itch","khujli","allergy",
-  "acne","blackhead","whitehead","sunscreen","spf","moisturizer","cleanser","facewash",
-  "toner","serum","retinol","niacinamide","vitamin c","glycolic","salicylic","aha","bha",
-  "hyperpigmentation","melasma","dark spots","eczema","psoriasis","dermatitis",
-  "hair","baal","bal","haircare","shampoo","conditioner","scalp","dandruff","hairfall","hair loss","split ends","heat protect"
-];
+    // Very clear off-topic buckets (non-derm)
     const offTopicTerms = [
-      "laptop","phone","mobile","iphone","android","computer","pc","gpu","cpu","tv","camera",
-      "car","bike","crypto","bitcoin","stocks","tax","visa","flight","hotel","football","game"
+      "laptop","notebook","macbook","ipad","tablet","phone","mobile","iphone","android",
+      "computer","pc","gpu","cpu","tv","camera","drone","headphone","speaker","printer",
+      "car","bike","motorcycle","truck","flight","ticket","hotel","visa","passport",
+      "crypto","bitcoin","stocks","tax","loan","mortgage","football","game","match","score",
+      "coding","react","javascript","python","homework","math","recipe","food","restaurant"
     ];
-
     const contains = (list, text) => list.some(w => text.includes(w));
-    const isDermQuery = contains(dermTerms, lastText);
     const isClearlyOffTopic = contains(offTopicTerms, lastText);
 
-    // Refuse only if it's clearly off-topic (laptops, phones, etc.)
-if (isClearlyOffTopic) {
-  const SORRY = {
-    hi: "माफ़ कीजिए—मैं सिर्फ़ स्किनकेयर/हेयरकेयर में मदद कर सकता/सकती हूँ. अगर त्वचा या बालों से जुड़ा सवाल है, बताइए 🙂",
-    ar: "عذرًا—يمكنني المساعدة فقط في العناية بالبشرة أو الشعر. إن كان لديك سؤال متعلق بهما فأخبرني 🙂",
-    tr: "Üzgünüm—yalnızca cilt ve saç bakımı konusunda yardımcı olabiliyorum. Bu konularda soruların varsa memnuniyetle 🙂",
-    ru: "Извини — я помогаю только с уходом за кожей и волосами. Если вопрос об этом — с радостью помогу 🙂",
-    en: "Sorry—I can help only with skincare and haircare. If you have a skin or hair question, I’m all yours 🙂"
-  };
-  return send(200, { reply: SORRY[userLang] || SORRY.en });
-}
-
-    // Friendly off-topic refusal
-    if (!isDermQuery || isClearlyOffTopic) {
+    // Refuse ONLY if clearly off-topic
+    if (isClearlyOffTopic) {
       const SORRY = {
-        hi: "माफ़ कीजिए—मैं सिर्फ़ स्किनकेयर/हेयरकेयर में मदद कर सकता/सकती हूँ. अगर त्वचा या बालों से जुड़ा सवाल है, बताइए 🙂",
-        ar: "عذرًا—يمكنني المساعدة فقط في العناية بالبشرة أو الشعر. إن كان لديك سؤال متعلق بهما فأخبرني 🙂",
+        hi: "माफ़ कीजिए—मैं सिर्फ़ स्किनकेयर/हेयरकेयर में मदद कर सकता/सकती हूँ। अगर त्वचा या बालों से जुड़ा सवाल है, बताइए 🙂",
+        ar: "عذرًا—أستطيع المساعدة فقط في العناية بالبشرة أو الشعر. إن كان سؤالك عنهما فأخبرني 🙂",
         tr: "Üzgünüm—yalnızca cilt ve saç bakımı konusunda yardımcı olabiliyorum. Bu konularda soruların varsa memnuniyetle 🙂",
         ru: "Извини — я помогаю только с уходом за кожей и волосами. Если вопрос об этом — с радостью помогу 🙂",
         en: "Sorry—I can help only with skincare and haircare. If you have a skin or hair question, I’m all yours 🙂"
       };
-      // If message is just small talk like “help” without derm words, we still respond politely:
-      if (!isDermQuery) return send(200, { reply: SORRY[userLang] || SORRY.en });
+      return send(200, { reply: SORRY[userLang] || SORRY.en });
+    }
+
+    // Optional: handle pure greetings locally (friendlier + cheaper)
+    if (isGreeting) {
+      const HELLO = {
+        hi: "नमस्ते! 😊 मैं स्किन/हेयर केयर में मदद कर सकती/कर सकता हूँ — बताइए क्या परेशानी है?",
+        ar: "مرحبًا! 😊 أستطيع المساعدة في العناية بالبشرة أو الشعر — ما الذي يزعجك؟",
+        tr: "Merhaba! 😊 Cilt veya saç bakımı konusunda yardımcı olabilirim — seni ne rahatsız ediyor?",
+        ru: "Привет! 😊 Помогу с уходом за кожей или волосами — что беспокоит?",
+        en: "Hey there! 😊 I can help with skincare or haircare — tell me what’s bothering you?"
+      };
+      return send(200, { reply: HELLO[userLang] || HELLO.en });
     }
 
     // ---- Build model messages ----
@@ -100,9 +92,9 @@ if (isClearlyOffTopic) {
       "You are a warm, friendly dermatology assistant. " +
       "Only discuss skincare, haircare, and dermatology. " +
       "If the user asks about anything else, politely refuse and redirect. " +
-      "Be concise, practical, and human—sound like a helpful friend. " +
+      "Ask brief clarifying questions when needed, and be concise and practical like a helpful friend. " +
       "Use short paragraphs or bullets. " +
-      "Always reply in the same language as the user's latest message.";
+      "Always reply in the SAME LANGUAGE as the user's latest message.";
 
     const systemMessage = {
       role: "system",
@@ -111,7 +103,7 @@ if (isClearlyOffTopic) {
         : systemBase
     };
 
-    // Optional hint for language
+    // Hint language to the model (helps consistency)
     const langHint = { role: "system", content: `User language: ${userLang}.` };
 
     const finalMessages = [systemMessage, langHint, ...messages];
