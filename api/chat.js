@@ -71,17 +71,17 @@ export default async function handler(req, res) {
     const isDermQuery = contains(dermTerms, lastText);
     const isClearlyOffTopic = contains(offTopicTerms, lastText);
 
-    // Friendly greeting (no strict topic yet)
-    if (isGreeting && !isDermQuery && !isClearlyOffTopic) {
-      const HELLO = {
-        hi: "अरे नमस्ते! 😊 मैं बढ़िया हूँ — आप कैसे हैं? 🌿 त्वचा या बालों की किसी परेशानी में मदद कर सकता/सकती हूँ — बताइए?",
-        ar: "مرحبًا! 😊 أنا بخير—وأنت؟ 🌿 أستطيع مساعدتك في العناية بالبشرة أو الشعر. أخبرني بمشكلتك.",
-        tr: "Merhaba! 😊 Ben iyiyim, ya sen? 🌿 Cilt veya saç bakımıyla ilgili yardımcı olabilirim.",
-        ru: "Привет! 😊 У меня всё хорошо, а у тебя? 🌿 Могу помочь с уходом за кожей или волосами.",
-        en: "Hey! 😊 I’m doing great — how about you? 🌿 I can help with skincare or haircare—what’s up?"
-      };
-      return send(200, { reply: HELLO[userLang] || HELLO.en });
-    }
+    // Refuse only if it's clearly off-topic (laptops, phones, etc.)
+if (isClearlyOffTopic) {
+  const SORRY = {
+    hi: "माफ़ कीजिए—मैं सिर्फ़ स्किनकेयर/हेयरकेयर में मदद कर सकता/सकती हूँ. अगर त्वचा या बालों से जुड़ा सवाल है, बताइए 🙂",
+    ar: "عذرًا—يمكنني المساعدة فقط في العناية بالبشرة أو الشعر. إن كان لديك سؤال متعلق بهما فأخبرني 🙂",
+    tr: "Üzgünüm—yalnızca cilt ve saç bakımı konusunda yardımcı olabiliyorum. Bu konularda soruların varsa memnuniyetle 🙂",
+    ru: "Извини — я помогаю только с уходом за кожей и волосами. Если вопрос об этом — с радостью помогу 🙂",
+    en: "Sorry—I can help only with skincare and haircare. If you have a skin or hair question, I’m all yours 🙂"
+  };
+  return send(200, { reply: SORRY[userLang] || SORRY.en });
+}
 
     // Friendly off-topic refusal
     if (!isDermQuery || isClearlyOffTopic) {
