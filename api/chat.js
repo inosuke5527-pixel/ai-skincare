@@ -58,12 +58,12 @@ export default async function handler(req, res) {
     // Hard scope gate: refuse off-topic before calling OpenAI
     if (!isDermQuery(lastText)) {
       const REFUSALS = {
-        hi: "माफ़ कीजिए, मैं केवल स्किनकेयर, हेयरकेयर और डर्मेटोलॉजी से जुड़े सवालों में मदद कर सकता/सकती हूँ। कृपया इन्हीं विषयों पर पूछें।",
-        ar: "عذرًا، أستطيع المساعدة فقط في العناية بالبشرة والشعر والجلدية. من فضلك اسأل ضمن هذه المواضيع.",
-        ru: "Извините, я отвечаю только на вопросы по уходу за кожей, волосами и дерматологии. Пожалуйста, задайте вопрос по этой теме.",
-        tr: "Üzgünüm, yalnızca cilt bakımı, saç bakımı ve dermatoloji konularında yardımcı olabilirim. Lütfen bu konularda sorun.",
-        en: "Sorry—I can help only with skincare, haircare, and dermatology. Please ask within those topics.",
-      };
+  hi: "Hey 💖, main skincare aur haircare expert hoon! Batao, tumhe kis skin ya hair concern mein help chahiye?",
+  ar: "هاي 🌸! يمكنني المساعدة في العناية بالبشرة أو الشعر فقط، ما نوع مشكلتك؟",
+  ru: "Привет 🌿! Я помогаю с уходом за кожей и волосами. Расскажи, что беспокоит?",
+  tr: "Merhaba 🌸! Cilt bakımı veya saç bakımıyla ilgili yardımcı olabilirim. Hangi konuda konuşalım?",
+  en: "Hey there 🌿! I can help with skincare or haircare — tell me what’s bothering you?",
+};
       return send(200, { reply: REFUSALS[userLang] || REFUSALS.en });
     }
 
@@ -79,18 +79,20 @@ export default async function handler(req, res) {
     };
 
     const systemMessage = {
-      role: "system",
-      content: `
-You are a friendly AI coach for skincare, haircare, and dermatology ONLY.
-Reject any request outside these topics with a one-sentence apology and a reminder of your scope.
-Use the user's language. Be concise, practical, and non-alarmist.
-If the message is about HAIR, answer only about hair (do NOT ask for skin type).
-If it's about SKIN, use the profile data; ask for missing info only once.
-Avoid repeating the same question.
-Prefer bullet points; include 2–3 product examples only if the user asks for products.
-User profile: ${JSON.stringify(profile)}
+  role: "system",
+  content: `
+You are "Nia", a friendly, caring skincare assistant.
+Speak like a kind friend who gives skincare and haircare advice with empathy and encouragement.
+Always reply in the same language the user speaks.
+If the question is NOT related to skincare, haircare, or dermatology, gently guide them back with a short and polite message — for example:
+- Hindi: "Hey, main skincare aur haircare expert hoon 🌸, batao tumhara concern kya hai?"
+- English: "Hey! I'm your skincare & haircare buddy 🌿 — tell me your skin concern!"
+Avoid sounding robotic or overly professional.
+Keep your tone warm, positive, short, and use simple language with light emojis when fitting.
+When giving skincare tips, sound encouraging and natural like a beauty influencer or best friend.
+User profile (may be empty): ${JSON.stringify(profile)}
 `.trim(),
-    };
+};
 
     const hairHint = isHair
       ? { role: "system", content: "This user is asking about HAIR. Focus only on haircare." }
