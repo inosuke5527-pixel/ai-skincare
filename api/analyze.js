@@ -1,10 +1,10 @@
 // /api/analyze.js
 
-// ✅ IMPORTANT: allow bigger base64 payloads
+// ✅ IMPORTANT: allow bigger base64 payloads (Vercel/Next API Routes)
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: "12mb", // increase if needed
+      sizeLimit: "12mb",
     },
   },
 };
@@ -14,14 +14,24 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { imageBase64, mode = "auto", locale = "auto" } = req.body || {};
+    const {
+      imageBase64,
+      mode = "auto",     // "product" | "skin" | "auto"
+      locale = "auto",   // "en" | "hi" | "tr" etc (optional)
+      promptText = "",   // ✅ user typed message about the image
+    } = req.body || {};
 
     if (!imageBase64) {
-      return res.status(400).json({ reply: "No image received.", products: [], detected: { kind: "unknown" } });
+      return res.status(400).json({
+        reply: "No image received.",
+        products: [],
+        detected: { kind: "unknown", confidence: 0, notes: "missing_image" },
+      });
     }
 
     // If base64 already has a prefix, keep it; otherwise add jpeg prefix
@@ -30,11 +40,8 @@ export default async function handler(req, res) {
 
     const normalizedMode = String(mode || "auto").toLowerCase();
 
-    // ---- Language hint (simple) ----
-    const lang =
-      locale && locale !== "auto"
-        ? String(locale)
-        : "en"; // keep English if you don't pass locale
+    // ---- Language hint ----
+    const lang = locale && locale !== "auto" ? String(locale) : "en";
 
     // ---- Prompt ----
     const system = `
@@ -48,6 +55,7 @@ Rules:
 - Be honest if you are not sure.
 - Keep advice practical and safe.
 - Reply language: ${lang}.
+
 Return JSON with this exact shape:
 {
   "detected": { "kind": "product" | "skin" | "unknown", "confidence": 0-1, "notes": "short" },
@@ -64,17 +72,21 @@ Return JSON with this exact shape:
 }
 
 Important:
-- Do not invent exact ingredients list if not visible.
+- Do not invent an exact ingredients list if not visible.
 - If you can read the label, mention what you can read.
-- If mode is "${normalizedMode}" follow it: product => treat as product, skin => treat as skin.
-`;
+- If mode is "${normalizedMode}" follow it:
+  - product => treat as product
+  - skin => treat as skin
+`.trim();
 
+    // ✅ THIS WAS MISSING IN YOUR FILE (userText)
     const userText =
-      normalizedMode === "product"
+      (promptText ? `User question: ${promptText}\n\n` : "") +
+      (normalizedMode === "product"
         ? "This is a product photo. Analyze the product."
         : normalizedMode === "skin"
         ? "This is a skin/selfie photo. Analyze the skin."
-        : "Decide whether this is a product photo or a skin photo, then analyze accordingly.";
+        : "Decide whether this is a product photo or a skin photo, then analyze accordingly.");
 
     // ---- Call OpenAI (Vision) ----
     const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -87,7 +99,7 @@ Important:
         model: "gpt-4o-mini",
         temperature: 0.3,
         messages: [
-          { role: "system", content: system.trim() },
+          { role: "system", content: system },
           {
             role: "user",
             content: [
@@ -100,6 +112,7 @@ Important:
     });
 
     const raw = await upstream.text();
+
     if (!upstream.ok) {
       return res.status(upstream.status).json({
         reply: "⚠️ OpenAI error while analyzing the image.",
@@ -113,7 +126,7 @@ Important:
       parsedUpstream = JSON.parse(raw);
     } catch {
       return res.status(502).json({
-        reply: "⚠️ Bad response from AI (not JSON).",
+        reply: "⚠️ Bad JSON from OpenAI upstream.",
         products: [],
         detected: { kind: "unknown", confidence: 0, notes: raw.slice(0, 300) },
       });
@@ -122,11 +135,13 @@ Important:
     const content = parsedUpstream?.choices?.[0]?.message?.content || "";
 
     // The model should return JSON string. Parse it.
-    let out;
+    let out = null;
+
+    // 1) direct parse
     try {
       out = JSON.parse(content);
     } catch {
-      // fallback if the model accidentally returned text around JSON
+      // 2) fallback: extract first {...} block
       const first = content.indexOf("{");
       const last = content.lastIndexOf("}");
       if (first !== -1 && last !== -1 && last > first) {
@@ -157,6 +172,10 @@ Important:
     return res.status(200).json({ reply, products, detected });
   } catch (err) {
     console.error("Analyze API error:", err);
-    return res.status(500).json({ reply: "⚠️ Error analyzing the image.", products: [], detected: { kind: "unknown" } });
+    return res.status(500).json({
+      reply: "⚠️ Error analyzing the image.",
+      products: [],
+      detected: { kind: "unknown", confidence: 0, notes: "server_error" },
+    });
   }
 }
