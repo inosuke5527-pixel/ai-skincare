@@ -4,7 +4,7 @@
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: "8mb", // increase if needed
+      sizeLimit: "12mb", // increase if needed
     },
   },
 };
