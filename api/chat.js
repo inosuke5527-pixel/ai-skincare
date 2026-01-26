@@ -56,12 +56,37 @@ export default async function handler(req, res) {
     const offTopicTerms = [
       "laptop","notebook","macbook","ipad","tablet","phone","mobile","iphone","android",
       "computer","pc","gpu","cpu","tv","camera","drone","headphone","speaker","printer",
-      "car","bike","motorcycle","truck","flight","ticket","hotel","visa","passport",
+      "cars",
+"car insurance",
+"car loan",
+,"bike","motorcycle","truck","flight","ticket","hotel","visa","passport",
       "crypto","bitcoin","stocks","tax","loan","mortgage","football","game","match","score",
       "coding","react","javascript","python","homework","math","recipe","food","restaurant"
     ];
-    const contains = (list, text) => list.some(w => text.includes(w));
-    const isClearlyOffTopic = contains(offTopicTerms, lastText);
+    // ✅ safer: match whole words, not substrings
+const escapeRegExp = (s="") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const containsWord = (list, text) =>
+  list.some((w) => {
+    const re = new RegExp(`\\b${escapeRegExp(w)}\\b`, "i");
+    return re.test(text);
+  });
+
+// ✅ allowlist: if it's skincare/haircare, NEVER treat as off-topic
+const skincareTerms = [
+  "skincare","skin care","routine","steps","order","beginner",
+  "acne","pimples","dark spots","pigmentation","marks","spots",
+  "sunscreen","spf","moisturizer","cleanser","serum",
+  "retinol","vitamin c","niacinamide","salicylic","benzoyl",
+  "haircare","hair care","dandruff","hairfall","itchy scalp",
+  "cure","treat","treatment","manage","results","ingredients","active"
+];
+
+const isSkincareQuestion = containsWord(skincareTerms, lastText);
+
+// ✅ off-topic ONLY if no skincare terms detected
+const isClearlyOffTopic = !isSkincareQuestion && containsWord(offTopicTerms, lastText);
+
 
     // Refuse ONLY if clearly off-topic
     if (isClearlyOffTopic) {
