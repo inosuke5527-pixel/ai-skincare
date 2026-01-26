@@ -59,7 +59,7 @@ export default async function handler(req, res) {
       "cars",
 "car insurance",
 "car loan",
-,"bike","motorcycle","truck","flight","ticket","hotel","visa","passport",
+"bike","motorcycle","truck","flight","ticket","hotel","visa","passport",
       "crypto","bitcoin","stocks","tax","loan","mortgage","football","game","match","score",
       "coding","react","javascript","python","homework","math","recipe","food","restaurant"
     ];
