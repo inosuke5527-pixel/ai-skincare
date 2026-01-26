@@ -28,7 +28,7 @@ export default async function handler(req, res) {
     if (!Array.isArray(messages) || messages.length === 0) {
       return send(400, { error: "messages array required" });
     }
-
+    const trimmedMessages = messages.slice(-12);
     // ---- Helpers ----
     const lastUser = [...messages].reverse().find(m => m?.role === "user");
     const lastTextRaw = (lastUser?.content || "").trim();
@@ -131,7 +131,7 @@ const isClearlyOffTopic = !isSkincareQuestion && containsWord(offTopicTerms, las
     // Hint language to the model (helps consistency)
     const langHint = { role: "system", content: `User language: ${userLang}.` };
 
-    const finalMessages = [systemMessage, langHint, ...messages];
+    const finalMessages = [systemMessage, langHint, ...trimmedMessages];
 
     // ---- Call OpenAI ----
     const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -141,10 +141,14 @@ const isClearlyOffTopic = !isSkincareQuestion && containsWord(offTopicTerms, las
         "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
-        temperature: 0.5,
-        messages: finalMessages
-      })
+  model: "gpt-4o-mini",
+  temperature: 0.4,
+  max_tokens: 350,        // ✅ limits reply length (saves cost)
+  presence_penalty: 0.1,
+  frequency_penalty: 0.1,
+  messages: finalMessages
+})
+
     });
 
     const rawText = await upstream.text();
@@ -157,7 +161,8 @@ const isClearlyOffTopic = !isSkincareQuestion && containsWord(offTopicTerms, las
     catch { return send(502, { error: "Bad JSON from upstream", detail: rawText.slice(0, 2000) }); }
 
     const reply = data?.choices?.[0]?.message?.content || "Sorry, I couldn’t respond right now.";
-    return send(200, { reply, intake, allowProducts });
+    return send(200, { reply });
+
   } catch (err) {
     return send(500, { error: String(err) });
   }
