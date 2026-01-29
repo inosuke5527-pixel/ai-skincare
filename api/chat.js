@@ -1,118 +1,207 @@
 // /api/chat.js
+
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "1mb",
+    },
+  },
+};
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function fetchWithRetry(url, options, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, options);
+
+    // retry on rate limit / temporary server errors
+    if ([429, 500, 502, 503, 504].includes(res.status) && attempt < retries) {
+      await sleep(900 * (attempt + 1)); // 0.9s, 1.8s, 2.7s
+      continue;
+    }
+
+    return res;
+  }
+}
+
 export default async function handler(req, res) {
   // ---- CORS ----
   const CORS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
   };
+
   const send = (status, obj) => {
     res.writeHead(status, CORS);
     res.end(JSON.stringify(obj));
   };
+
   if (req.method === "OPTIONS") return send(200, { ok: true });
-  if (req.method !== "POST")   return send(405, { error: "Use POST" });
+  if (req.method !== "POST") return send(405, { error: "Use POST" });
 
   try {
+    // ✅ IMPORTANT: show clear error if API key missing
+    if (!process.env.OPENAI_API_KEY) {
+      return send(500, {
+        error: "Server misconfigured",
+        message: "OPENAI_API_KEY is missing in Vercel environment variables.",
+      });
+    }
+
     const body = req.body || {};
     const {
       messages = [],
-      intake = {},
-      allowProducts = false,
-      // Optional hints from the app:
       locale: localeFromApp = "auto",
-      systemPrompt: systemPromptFromApp = ""
+      systemPrompt: systemPromptFromApp = "",
     } = body;
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return send(400, { error: "messages array required" });
     }
+
     const trimmedMessages = messages.slice(-12);
+
     // ---- Helpers ----
-    const lastUser = [...messages].reverse().find(m => m?.role === "user");
+    const lastUser = [...messages].reverse().find((m) => m?.role === "user");
     const lastTextRaw = (lastUser?.content || "").trim();
     const lastText = lastTextRaw.toLowerCase();
 
-    // Detect UI language (script + some romanized hints)
     const detectLang = (s = "") => {
-      if (/[ऀ-ॿ]/.test(s)) return "hi";                 // Hindi (Devanagari)
-      if (/[اأإآء-ي]/.test(s)) return "ar";             // Arabic
-      if (/[а-яё]/i.test(s)) return "ru";               // Russian
-      if (/[ğüşöçıİĞÜŞÖÇ]/i.test(s)) return "tr";       // Turkish
-      // Roman Hindi / Hinglish hints:
-      if (/\b(kaise|kese|kya|kyu|nahi|haan|madad|meri|mera|chehra|chehre|dard|khujli|daane|daag)\b/i.test(s)) return "hi";
+      if (/[ऀ-ॿ]/.test(s)) return "hi";
+      if (/[اأإآء-ي]/.test(s)) return "ar";
+      if (/[а-яё]/i.test(s)) return "ru";
+      if (/[ğüşöçıİĞÜŞÖÇ]/i.test(s)) return "tr";
+      if (/\b(kaise|kese|kya|kyu|nahi|haan|madad|meri|mera|chehra|chehre|dard|khujli|daane|daag)\b/i.test(s))
+        return "hi";
       return "en";
     };
 
-    const userLang = localeFromApp && localeFromApp !== "auto"
-      ? localeFromApp
-      : detectLang(lastTextRaw);
+    const userLang = localeFromApp && localeFromApp !== "auto" ? localeFromApp : detectLang(lastTextRaw);
 
-    const isGreeting = /\b(hi|hello|hey|yo|namaste|namaskar|salam|as-?salaam|what'?s up|sup|hola|merhaba|privet)\b/i
-      .test(lastText);
+    const isGreeting = /\b(hi|hello|hey|yo|namaste|namaskar|salam|as-?salaam|what'?s up|sup|hola|merhaba|privet)\b/i.test(
+      lastText
+    );
 
-    // Very clear off-topic buckets (non-derm)
+    const escapeRegExp = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const containsWord = (list, text) =>
+      list.some((w) => new RegExp(`\\b${escapeRegExp(w)}\\b`, "i").test(text));
+
     const offTopicTerms = [
-      "laptop","notebook","macbook","ipad","tablet","phone","mobile","iphone","android",
-      "computer","pc","gpu","cpu","tv","camera","drone","headphone","speaker","printer",
+      "laptop",
+      "notebook",
+      "macbook",
+      "ipad",
+      "tablet",
+      "phone",
+      "mobile",
+      "iphone",
+      "android",
+      "computer",
+      "pc",
+      "gpu",
+      "cpu",
+      "tv",
+      "camera",
+      "drone",
+      "headphone",
+      "speaker",
+      "printer",
       "cars",
-"car insurance",
-"car loan",
-"bike","motorcycle","truck","flight","ticket","hotel","visa","passport",
-      "crypto","bitcoin","stocks","tax","loan","mortgage","football","game","match","score",
-      "coding","react","javascript","python","homework","math","recipe","food","restaurant"
+      "car insurance",
+      "car loan",
+      "bike",
+      "motorcycle",
+      "truck",
+      "flight",
+      "ticket",
+      "hotel",
+      "visa",
+      "passport",
+      "crypto",
+      "bitcoin",
+      "stocks",
+      "tax",
+      "loan",
+      "mortgage",
+      "football",
+      "game",
+      "match",
+      "score",
+      "coding",
+      "react",
+      "javascript",
+      "python",
+      "homework",
+      "math",
+      "recipe",
+      "food",
+      "restaurant",
     ];
-    // ✅ safer: match whole words, not substrings
-const escapeRegExp = (s="") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const containsWord = (list, text) =>
-  list.some((w) => {
-    const re = new RegExp(`\\b${escapeRegExp(w)}\\b`, "i");
-    return re.test(text);
-  });
+    const skincareTerms = [
+      "skincare",
+      "skin care",
+      "routine",
+      "steps",
+      "order",
+      "beginner",
+      "acne",
+      "pimples",
+      "dark spots",
+      "pigmentation",
+      "marks",
+      "spots",
+      "sunscreen",
+      "spf",
+      "moisturizer",
+      "cleanser",
+      "serum",
+      "retinol",
+      "vitamin c",
+      "niacinamide",
+      "salicylic",
+      "benzoyl",
+      "haircare",
+      "hair care",
+      "dandruff",
+      "hairfall",
+      "itchy scalp",
+      "cure",
+      "treat",
+      "treatment",
+      "manage",
+      "results",
+      "ingredients",
+      "active",
+    ];
 
-// ✅ allowlist: if it's skincare/haircare, NEVER treat as off-topic
-const skincareTerms = [
-  "skincare","skin care","routine","steps","order","beginner",
-  "acne","pimples","dark spots","pigmentation","marks","spots",
-  "sunscreen","spf","moisturizer","cleanser","serum",
-  "retinol","vitamin c","niacinamide","salicylic","benzoyl",
-  "haircare","hair care","dandruff","hairfall","itchy scalp",
-  "cure","treat","treatment","manage","results","ingredients","active"
-];
+    const isSkincareQuestion = containsWord(skincareTerms, lastText);
+    const isClearlyOffTopic = !isSkincareQuestion && containsWord(offTopicTerms, lastText);
 
-const isSkincareQuestion = containsWord(skincareTerms, lastText);
-
-// ✅ off-topic ONLY if no skincare terms detected
-const isClearlyOffTopic = !isSkincareQuestion && containsWord(offTopicTerms, lastText);
-
-
-    // Refuse ONLY if clearly off-topic
     if (isClearlyOffTopic) {
       const SORRY = {
         hi: "माफ़ कीजिए—मैं सिर्फ़ स्किनकेयर/हेयरकेयर में मदद कर सकता/सकती हूँ। अगर त्वचा या बालों से जुड़ा सवाल है, बताइए 🙂",
         ar: "عذرًا—أستطيع المساعدة فقط في العناية بالبشرة أو الشعر. إن كان سؤالك عنهما فأخبرني 🙂",
         tr: "Üzgünüm—yalnızca cilt ve saç bakımı konusunda yardımcı olabiliyorum. Bu konularda soruların varsa memnuniyetle 🙂",
         ru: "Извини — я помогаю только с уходом за кожей и волосами. Если вопрос об этом — с радостью помогу 🙂",
-        en: "Sorry—I can help only with skincare and haircare. If you have a skin or hair question, I’m all yours 🙂"
+        en: "Sorry—I can help only with skincare and haircare. If you have a skin or hair question, I’m all yours 🙂",
       };
       return send(200, { reply: SORRY[userLang] || SORRY.en });
     }
 
-    // Optional: handle pure greetings locally (friendlier + cheaper)
     if (isGreeting) {
       const HELLO = {
         hi: "नमस्ते! 😊 मैं स्किन/हेयर केयर में मदद कर सकती/कर सकता हूँ — बताइए क्या परेशानी है?",
         ar: "مرحبًا! 😊 أستطيع المساعدة في العناية بالبشرة أو الشعر — ما الذي يزعجك؟",
         tr: "Merhaba! 😊 Cilt veya saç bakımı konusunda yardımcı olabilirim — seni ne rahatsız ediyor?",
         ru: "Привет! 😊 Помогу с уходом за кожей или волосами — что беспокоит?",
-        en: "Hey there! 😊 I can help with skincare or haircare — tell me what’s bothering you?"
+        en: "Hey there! 😊 I can help with skincare or haircare — tell me what’s bothering you?",
       };
       return send(200, { reply: HELLO[userLang] || HELLO.en });
     }
 
-    // ---- Build model messages ----
     const systemBase =
       "You are a warm, friendly dermatology assistant. " +
       "Only discuss skincare, haircare, and dermatology. " +
@@ -123,47 +212,52 @@ const isClearlyOffTopic = !isSkincareQuestion && containsWord(offTopicTerms, las
 
     const systemMessage = {
       role: "system",
-      content: (systemPromptFromApp && String(systemPromptFromApp).trim())
-        ? `${systemBase}\n\nAdditional app hint: ${systemPromptFromApp}`
-        : systemBase
+      content:
+        systemPromptFromApp && String(systemPromptFromApp).trim()
+          ? `${systemBase}\n\nAdditional app hint: ${systemPromptFromApp}`
+          : systemBase,
     };
 
-    // Hint language to the model (helps consistency)
     const langHint = { role: "system", content: `User language: ${userLang}.` };
 
     const finalMessages = [systemMessage, langHint, ...trimmedMessages];
 
-    // ---- Call OpenAI ----
-    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
+    const upstream = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-  model: "gpt-4o-mini",
-  temperature: 0.4,
-  max_tokens: 350,        // ✅ limits reply length (saves cost)
-  presence_penalty: 0.1,
-  frequency_penalty: 0.1,
-  messages: finalMessages
-})
-
+        model: "gpt-4o-mini",
+        temperature: 0.4,
+        max_tokens: 350,
+        presence_penalty: 0.1,
+        frequency_penalty: 0.1,
+        messages: finalMessages,
+      }),
     });
 
     const rawText = await upstream.text();
+
+    // ✅ IMPORTANT: return real OpenAI error text in "message" so app shows it
     if (!upstream.ok) {
-      return send(upstream.status, { error: "OpenAI upstream error", detail: rawText.slice(0, 2000) });
+      return send(upstream.status, {
+        error: "OpenAI upstream error",
+        message: rawText.slice(0, 1200),
+      });
     }
 
     let data;
-    try { data = JSON.parse(rawText); }
-    catch { return send(502, { error: "Bad JSON from upstream", detail: rawText.slice(0, 2000) }); }
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      return send(502, { error: "Bad JSON from upstream", message: rawText.slice(0, 1200) });
+    }
 
     const reply = data?.choices?.[0]?.message?.content || "Sorry, I couldn’t respond right now.";
     return send(200, { reply });
-
   } catch (err) {
-    return send(500, { error: String(err) });
+    return send(500, { error: "Server error", message: String(err?.message || err) });
   }
 }
