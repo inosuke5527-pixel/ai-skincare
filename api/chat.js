@@ -198,17 +198,6 @@ export default async function handler(req, res) {
       return send(200, { reply: SORRY[userLang] || SORRY.en });
     }
 
-    if (isGreeting) {
-      const HELLO = {
-        hi: "नमस्ते! 😊 मैं स्किन/हेयर केयर में मदद कर सकती/कर सकता हूँ — बताइए क्या परेशानी है?",
-        ar: "مرحبًا! 😊 أستطيع المساعدة في العناية بالبشرة أو الشعر — ما الذي يزعجك؟",
-        tr: "Merhaba! 😊 Cilt veya saç bakımı konusunda yardımcı olabilirim — seni ne rahatsız ediyor?",
-        ru: "Привет! 😊 Помогу с уходом за кожей или волосами — что беспокоит?",
-        en: "Hey there! 😊 I can help with skincare or haircare — tell me what’s bothering you?",
-      };
-      return send(200, { reply: HELLO[userLang] || HELLO.en });
-    }
-
     const systemBase =
   "You are a friendly dermatology assistant. " +
   "Only discuss skincare/haircare. " +
