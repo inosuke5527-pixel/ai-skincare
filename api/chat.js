@@ -61,8 +61,16 @@ export default async function handler(req, res) {
       return send(400, { error: "messages array required" });
     }
 
-    const trimmedMessages = cleanedMessages.slice(-6); // ✅ reduce history = less tokens
     const cleanedMessages = (messages || []).filter((m) => {
+  const c = String(m?.content || "").trim().toLowerCase();
+  if (!c) return false;
+  if (c === "hello" || c === "hi") return false;
+  if (c === "thinking..." || c === "analyzing...") return false;
+  return m.role === "user" || m.role === "assistant";
+});
+
+const trimmedMessages = cleanedMessages.slice(-6); // ✅ now it works
+
     const c = String(m?.content || "").trim().toLowerCase();
     if (!c) return false;
     if (c === "hello" || c === "hi") return false;
