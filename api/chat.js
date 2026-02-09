@@ -61,7 +61,14 @@ export default async function handler(req, res) {
       return send(400, { error: "messages array required" });
     }
 
-    const trimmedMessages = messages.slice(-12);
+    const trimmedMessages = cleanedMessages.slice(-6); // ✅ reduce history = less tokens
+    const cleanedMessages = (messages || []).filter((m) => {
+    const c = String(m?.content || "").trim().toLowerCase();
+    if (!c) return false;
+    if (c === "hello" || c === "hi") return false;
+    if (c === "thinking..." || c === "analyzing...") return false;
+    return m.role === "user" || m.role === "assistant";
+});
 
     // ---- Helpers ----
     const lastUser = [...messages].reverse().find((m) => m?.role === "user");
@@ -203,25 +210,26 @@ export default async function handler(req, res) {
     }
 
     const systemBase =
-      "You are a warm, friendly dermatology assistant. " +
-      "Only discuss skincare, haircare, and dermatology. " +
-      "If the user asks about anything else, politely refuse and redirect. " +
-      "Ask brief clarifying questions when needed, and be concise and practical like a helpful friend. " +
-      "Use short paragraphs or bullets. " +
-      "Always reply in the SAME LANGUAGE as the user's latest message.";
+  "You are a friendly dermatology assistant. " +
+  "Only discuss skincare/haircare. " +
+  "Always reply in the user's language. " +
+  "Be concise. Ask at most 1 follow-up question if needed. " +
+  "Prefer simple routines (cleanser, moisturizer, sunscreen).";
 
-    const systemMessage = {
-      role: "system",
-      content:
-        systemPromptFromApp && String(systemPromptFromApp).trim()
-          ? `${systemBase}\n\nAdditional app hint: ${systemPromptFromApp}`
-          : systemBase,
-    };
 
-    const langHint = { role: "system", content: `User language: ${userLang}.` };
+    const profileHint = systemPromptFromApp && String(systemPromptFromApp).trim()
+  ? `\n\nUSER PROFILE:\n${String(systemPromptFromApp).trim()}`
+  : "";
 
-    const finalMessages = [systemMessage, langHint, ...trimmedMessages];
+const systemMessage = {
+  role: "system",
+  content: systemBase + profileHint,
+};
 
+
+    
+
+    const finalMessages = [systemMessage, ...trimmedMessages];
     const upstream = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -231,7 +239,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: "gpt-4o-mini",
         temperature: 0.4,
-        max_tokens: 350,
+        max_tokens: 220,
         presence_penalty: 0.1,
         frequency_penalty: 0.1,
         messages: finalMessages,
