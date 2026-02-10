@@ -70,14 +70,7 @@ export default async function handler(req, res) {
 });
 
 const trimmedMessages = cleanedMessages.slice(-6); // ✅ now it works
-
-    const c = String(m?.content || "").trim().toLowerCase();
-    if (!c) return false;
-    if (c === "hello" || c === "hi") return false;
-    if (c === "thinking..." || c === "analyzing...") return false;
-    return m.role === "user" || m.role === "assistant";
-});
-
+    
     // ---- Helpers ----
     const lastUser = [...messages].reverse().find((m) => m?.role === "user");
     const lastTextRaw = (lastUser?.content || "").trim();
