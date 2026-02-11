@@ -217,12 +217,13 @@ const userLang =
   "\nPRODUCT: <Category> — <Real example product name> (morning)" +
   "\nPRODUCT: <Category> — <Real example product name> (evening)" +
   "\nRules:" +
+  "\n- Category must be one of: Cleanser, Toner, Serum, Moisturizer, Sunscreen, Night Treatment." +
   "\n- Use ONLY (morning) or (evening)." +
   "\n- Max 6 PRODUCT lines total." +
   "\n- Each PRODUCT line must include a real buyable example (brand + product name)." +
   "\n- Do NOT repeat the same product name in both morning and evening. If cleanser is needed at night, use a DIFFERENT cleanser name for evening." +
   "\n- Do NOT write anything after the last PRODUCT line.";
-  "\n- Category must be one of: Cleanser, Toner, Serum, Moisturizer, Sunscreen, Night Treatment." +
+
 
 
 
