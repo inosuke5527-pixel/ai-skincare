@@ -64,7 +64,7 @@ export default async function handler(req, res) {
     const cleanedMessages = (messages || []).filter((m) => {
   const c = String(m?.content || "").trim().toLowerCase();
   if (!c) return false;
-  if (c === "hello" || c === "hi") return false;
+  //if (c === "hello" || c === "hi") return false;
   if (c === "thinking..." || c === "analyzing...") return false;
   return m.role === "user" || m.role === "assistant";
 });
@@ -75,6 +75,18 @@ const trimmedMessages = cleanedMessages.slice(-6); // ✅ now it works
     const lastUser = [...messages].reverse().find((m) => m?.role === "user");
     const lastTextRaw = (lastUser?.content || "").trim();
     const lastText = lastTextRaw.toLowerCase();
+    // ✅ instant reply for greetings (no OpenAI call = no delay)
+if (/^(hi|hello|hey|yo|namaste|merhaba|salam|privet)\b/i.test(lastTextRaw)) {
+  const GREET = {
+    hi: "Hi 😊 Tell me your skin type (oily/dry/combination/sensitive) and your main concern (acne, dark spots, dryness, etc.).",
+    ar: "مرحبًا 😊 أخبرني نوع بشرتك (دهنية/جافة/مختلطة/حساسة) وما مشكلتك الأساسية.",
+    tr: "Merhaba 😊 Cilt tipini (yağlı/kuru/karma/hassas) ve ana şikayetini (sivilce/lekeler/kuruluk) yaz.",
+    ru: "Привет 😊 Напиши тип кожи и главную проблему (акне/пятна/сухость).",
+    en: "Hi 😊 Tell me your skin type (oily/dry/combination/sensitive) and your main concern (acne, dark spots, dryness, etc.).",
+  };
+  return send(200, { reply: GREET[userLang] || GREET.en });
+}
+
 
     const detectLang = (s = "") => {
       if (/[ऀ-ॿ]/.test(s)) return "hi";
