@@ -72,33 +72,26 @@ export default async function handler(req, res) {
 const trimmedMessages = cleanedMessages.slice(-6); // ✅ now it works
     
     // ---- Helpers ----
-    const lastUser = [...messages].reverse().find((m) => m?.role === "user");
-    const lastTextRaw = (lastUser?.content || "").trim();
-    const lastText = lastTextRaw.toLowerCase();
-    // ✅ instant reply for greetings (no OpenAI call = no delay)
-if (/^(hi|hello|hey|yo|namaste|merhaba|salam|privet)\b/i.test(lastTextRaw)) {
-  const GREET = {
-    hi: "Hi 😊 Tell me your skin type (oily/dry/combination/sensitive) and your main concern (acne, dark spots, dryness, etc.).",
-    ar: "مرحبًا 😊 أخبرني نوع بشرتك (دهنية/جافة/مختلطة/حساسة) وما مشكلتك الأساسية.",
-    tr: "Merhaba 😊 Cilt tipini (yağlı/kuru/karma/hassas) ve ana şikayetini (sivilce/lekeler/kuruluk) yaz.",
-    ru: "Привет 😊 Напиши тип кожи и главную проблему (акне/пятна/сухость).",
-    en: "Hi 😊 Tell me your skin type (oily/dry/combination/sensitive) and your main concern (acne, dark spots, dryness, etc.).",
-  };
-  return send(200, { reply: GREET[userLang] || GREET.en });
-}
+const lastUser = [...messages].reverse().find((m) => m?.role === "user");
+const lastTextRaw = (lastUser?.content || "").trim();
+const lastText = lastTextRaw.toLowerCase();
 
+const detectLang = (s = "") => {
+  if (/[ऀ-ॿ]/.test(s)) return "hi";
+  if (/[اأإآء-ي]/.test(s)) return "ar";
+  if (/[а-яё]/i.test(s)) return "ru";
+  if (/[ğüşöçıİĞÜŞÖÇ]/i.test(s)) return "tr";
+  if (/\b(kaise|kese|kya|kyu|nahi|haan|madad|meri|mera|chehra|chehre|dard|khujli|daane|daag)\b/i.test(s))
+    return "hi";
+  return "en";
+};
 
-    const detectLang = (s = "") => {
-      if (/[ऀ-ॿ]/.test(s)) return "hi";
-      if (/[اأإآء-ي]/.test(s)) return "ar";
-      if (/[а-яё]/i.test(s)) return "ru";
-      if (/[ğüşöçıİĞÜŞÖÇ]/i.test(s)) return "tr";
-      if (/\b(kaise|kese|kya|kyu|nahi|haan|madad|meri|mera|chehra|chehre|dard|khujli|daane|daag)\b/i.test(s))
-        return "hi";
-      return "en";
-    };
+// ✅ MOVE THIS UP HERE (before SORRY / off-topic checks)
+const userLang =
+  localeFromApp && localeFromApp !== "auto"
+    ? localeFromApp
+    : detectLang(lastTextRaw);
 
-    const userLang = localeFromApp && localeFromApp !== "auto" ? localeFromApp : detectLang(lastTextRaw);
 
     const isGreeting = /\b(hi|hello|hey|yo|namaste|namaskar|salam|as-?salaam|what'?s up|sup|hola|merhaba|privet)\b/i.test(
       lastText
