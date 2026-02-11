@@ -209,12 +209,24 @@ const userLang =
   "Only discuss skincare/haircare. " +
   "Always reply in the user's language. " +
   "Be concise. Ask at most 1 follow-up question if needed. " +
-  "Prefer simple routines (cleanser, moisturizer, sunscreen).";
+  "Prefer simple routines (cleanser, moisturizer, sunscreen)." +
+  "\n\nVERY IMPORTANT OUTPUT:" +
+  "\nAt the END of every routine recommendation, include this exact block:" +
+  "\nROUTINE_PRODUCTS:" +
+  "\nPRODUCT: <product name> (morning)" +
+  "\nPRODUCT: <product name> (evening)" +
+  "\nRules:" +
+  "\n- Use (morning) or (evening) always." +
+  "\n- Put only products you recommend adding." +
+  "\n- If routine time in profile is Morning, prioritize morning products; if Night/Evening, prioritize evening products.";
 
 
-    const profileHint = systemPromptFromApp && String(systemPromptFromApp).trim()
-  ? `\n\nUSER PROFILE:\n${String(systemPromptFromApp).trim()}`
-  : "";
+
+    const profileHint =
+  systemPromptFromApp && String(systemPromptFromApp).trim()
+    ? `\n\nUSER PROFILE (IMPORTANT: personalize using this):\n${String(systemPromptFromApp).trim()}\n\nRules:\n- Use Skin Type + Concerns + Routine time when giving routine.\n- If user says "add those products to my routine", you must output routine products in the format below.`
+    : "";
+
 
 const systemMessage = {
   role: "system",
