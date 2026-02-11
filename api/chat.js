@@ -214,12 +214,16 @@ const userLang =
   "\n1) Write the normal helpful answer first." +
   "\n2) Then at the VERY END output the block exactly like this:" +
   "\nROUTINE_PRODUCTS:" +
-  "\nPRODUCT: <product name> (morning)" +
-  "\nPRODUCT: <product name> (evening)" +
+  "\nPRODUCT: <Category> — <Real example product name> (morning)" +
+  "\nPRODUCT: <Category> — <Real example product name> (evening)" +
   "\nRules:" +
   "\n- Use ONLY (morning) or (evening)." +
   "\n- Max 6 PRODUCT lines total." +
+  "\n- Each PRODUCT line must include a real buyable example (brand + product name)." +
+  "\n- Do NOT repeat the same product name in both morning and evening. If cleanser is needed at night, use a DIFFERENT cleanser name for evening." +
   "\n- Do NOT write anything after the last PRODUCT line.";
+  "\n- Category must be one of: Cleanser, Toner, Serum, Moisturizer, Sunscreen, Night Treatment." +
+
 
 
 
