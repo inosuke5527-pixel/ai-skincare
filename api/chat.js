@@ -124,7 +124,8 @@ await db.runTransaction(async (tx) => {
 if (!info.isPremium && info.used >= info.limit) {
   return send(200, {
     error: "LIMIT_REACHED",
-    message: "Daily free AI limit reached. Upgrade to Premium.",
+    message: "You used all your free trials for today. Upgrade to Premium for unlimited questions and answers.",
+
   });
 }
 
@@ -278,10 +279,11 @@ const systemBaseFree =
   "Always reply in the user's language. " +
   "Be SHORT and simple (max 6-8 lines). " +
   "Do NOT give brand/product names. " +
-  "Give only a basic routine template (Cleanser, Moisturizer, Sunscreen). " +
+  "You CAN suggest general choices (e.g., gel, oil-free, non-comedogenic) and what to look for on labels. " +
+  "Give only a basic routine template when asked (Cleanser, Moisturizer, Sunscreen). " +
   "Avoid strong actives (retinoids/acids) unless the user asks, and add a short safety note. " +
   "Ask at most 1 follow-up question if needed. " +
-  "If the user asks for specific products, say: 'This is a Premium feature' and suggest upgrading.";
+  "If the user asks for exact product recommendations or brand names (e.g., 'which sunscreen should I buy', 'best sunscreen brand', 'recommend me a product'), say: 'Exact product recommendations are a Premium feature' and suggest upgrading.";
 
 const systemBasePremium =
   "You are a friendly dermatology assistant. " +
