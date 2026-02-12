@@ -271,11 +271,23 @@ const userLang =
       return send(200, { reply: SORRY[userLang] || SORRY.en });
     }
 
-    const systemBase =
+    // ✅ FREE vs PREMIUM system prompts
+const systemBaseFree =
   "You are a friendly dermatology assistant. " +
   "Only discuss skincare/haircare. " +
   "Always reply in the user's language. " +
-  "Be concise. Ask at most 1 follow-up question if needed. " +
+  "Be SHORT and simple (max 6-8 lines). " +
+  "Do NOT give brand/product names. " +
+  "Give only a basic routine template (Cleanser, Moisturizer, Sunscreen). " +
+  "Avoid strong actives (retinoids/acids) unless the user asks, and add a short safety note. " +
+  "Ask at most 1 follow-up question if needed. " +
+  "If the user asks for specific products, say: 'This is a Premium feature' and suggest upgrading.";
+
+const systemBasePremium =
+  "You are a friendly dermatology assistant. " +
+  "Only discuss skincare/haircare. " +
+  "Always reply in the user's language. " +
+  "Be concise but helpful. Ask at most 1 follow-up question if needed. " +
   "Prefer simple routines (cleanser, moisturizer, sunscreen)." +
   "\n\nVERY IMPORTANT OUTPUT FORMAT:" +
   "\n1) Write the normal helpful answer first." +
@@ -290,6 +302,10 @@ const userLang =
   "\n- Each PRODUCT line must include a real buyable example (brand + product name)." +
   "\n- Do NOT repeat the same product name in both morning and evening. If cleanser is needed at night, use a DIFFERENT cleanser name for evening." +
   "\n- Do NOT write anything after the last PRODUCT line.";
+
+// ✅ choose prompt based on Firestore premium flag
+const systemBase = info.isPremium ? systemBasePremium : systemBaseFree;
+
 
 
 
@@ -312,7 +328,15 @@ const systemMessage = {
     
 
     const finalMessages = [systemMessage, ...trimmedMessages];
-    const upstream = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
+    // ✅ Prevent infinite thinking (15 sec timeout)
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 15000);
+
+let upstream;
+try {
+  upstream = await fetchWithRetry(
+    "https://api.openai.com/v1/chat/completions",
+    {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -321,12 +345,21 @@ const systemMessage = {
       body: JSON.stringify({
         model: "gpt-4o-mini",
         temperature: 0.4,
-        max_tokens: 500,
+        max_tokens: info.isPremium ? 650 : 220,
         presence_penalty: 0.1,
         frequency_penalty: 0.1,
         messages: finalMessages,
       }),
-    });
+      signal: controller.signal,
+    }
+  );
+} finally {
+  clearTimeout(timeout);
+}
+if (!upstream) {
+  return send(200, { reply: "Sorry—AI is busy right now. Please try again 🙂" });
+}
+
 
     const rawText = await upstream.text();
 
@@ -348,6 +381,14 @@ const systemMessage = {
     const reply = data?.choices?.[0]?.message?.content || "Sorry, I couldn’t respond right now.";
     return send(200, { reply });
   } catch (err) {
-    return send(500, { error: "Server error", message: String(err?.message || err) });
+  // ✅ Timeout / aborted request
+  if (String(err?.name) === "AbortError") {
+    return send(200, {
+      reply: "Sorry—AI is busy right now. Please try again in a few seconds 🙂",
+    });
   }
+
+  return send(500, { error: "Server error", message: String(err?.message || err) });
+}
+
 }
