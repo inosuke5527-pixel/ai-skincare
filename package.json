@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "openai": "^4.0.0"
-  }
+  "openai": "^4.0.0",
+  "firebase-admin": "^12.5.0"
 }
+
+}
+
