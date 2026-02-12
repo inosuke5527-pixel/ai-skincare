@@ -1,4 +1,5 @@
 // /api/chat.js
+import { getDb, requireUser, admin } from "./_firebaseAdmin.js";
 
 export const config = {
   api: {
@@ -22,6 +23,22 @@ async function fetchWithRetry(url, options, retries = 2) {
 
     return res;
   }
+}
+// ✅ AI daily limit
+const FREE_DAILY_LIMIT = 5;
+
+function dayKeyInKolkata(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const y = parts.find((p) => p.type === "year")?.value;
+  const m = parts.find((p) => p.type === "month")?.value;
+  const d = parts.find((p) => p.type === "day")?.value;
+  return `${y}-${m}-${d}`;
 }
 
 export default async function handler(req, res) {
@@ -60,6 +77,52 @@ export default async function handler(req, res) {
     if (!Array.isArray(messages) || messages.length === 0) {
       return send(400, { error: "messages array required" });
     }
+// ✅ Check login + daily limit
+const decoded = await requireUser(req);
+if (!decoded?.uid) {
+  return send(401, { error: "UNAUTHORIZED", message: "Login required" });
+}
+
+const uid = decoded.uid;
+const db = getDb();
+const userRef = db.collection("users").doc(uid);
+
+const todayKey = dayKeyInKolkata();
+let info = { isPremium: false, used: 0, limit: FREE_DAILY_LIMIT };
+
+await db.runTransaction(async (tx) => {
+  const snap = await tx.get(userRef);
+  const data = snap.exists ? snap.data() : {};
+
+  const isPremium = !!data?.premium?.isPremium;
+
+  const ai = data?.ai || {};
+  const lastResetKey = ai?.lastResetKey || null;
+  let dailyUsed = Number(ai?.dailyUsed || 0);
+
+  if (lastResetKey !== todayKey) {
+    dailyUsed = 0;
+    tx.set(userRef, { ai: { dailyUsed: 0, lastResetKey: todayKey } }, { merge: true });
+  }
+
+  const limit = isPremium ? 999999 : FREE_DAILY_LIMIT;
+  info = { isPremium, used: dailyUsed, limit };
+
+  if (!isPremium && dailyUsed >= limit) return;
+
+  tx.set(
+    userRef,
+    { ai: { dailyUsed: admin.firestore.FieldValue.increment(1), lastResetKey: todayKey } },
+    { merge: true }
+  );
+});
+
+if (!info.isPremium && info.used >= info.limit) {
+  return send(200, {
+    error: "LIMIT_REACHED",
+    message: "Daily free AI limit reached. Upgrade to Premium.",
+  });
+}
 
     const cleanedMessages = (messages || []).filter((m) => {
   const c = String(m?.content || "").trim().toLowerCase();
