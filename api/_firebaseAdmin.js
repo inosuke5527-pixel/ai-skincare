@@ -30,13 +30,19 @@ export function getDb() {
   return admin.firestore();
 }
 
-export async function requireUserFromAuth(req) {
-  const h = req.headers.authorization || "";
+export async function requireUser(req) {
+  const h = req.headers?.authorization || "";
   const token = h.startsWith("Bearer ") ? h.slice(7) : null;
 
   if (!token) return null;
 
-  getAdminApp();
-  const decoded = await admin.auth().verifyIdToken(token);
-  return decoded; // { uid, ... }
+  try {
+    getAdminApp();
+    const decoded = await admin.auth().verifyIdToken(token);
+    return decoded; // { uid, ... }
+  } catch (e) {
+    // invalid/expired token -> treat as not logged in
+    return null;
+  }
 }
+
