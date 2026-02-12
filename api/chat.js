@@ -51,9 +51,13 @@ export default async function handler(req, res) {
   };
 
   const send = (status, obj) => {
-    res.writeHead(status, CORS);
-    res.end(JSON.stringify(obj));
-  };
+  const code = Number(status);
+  const safeStatus = Number.isFinite(code) && code >= 200 && code <= 599 ? code : 500;
+
+  res.writeHead(safeStatus, CORS);
+  res.end(JSON.stringify(obj));
+};
+
 
   if (req.method === "OPTIONS") return send(200, { ok: true });
   if (req.method !== "POST") return send(405, { error: "Use POST" });
