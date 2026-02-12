@@ -45,4 +45,5 @@ export async function requireUser(req) {
     return null;
   }
 }
+export { admin };
 
